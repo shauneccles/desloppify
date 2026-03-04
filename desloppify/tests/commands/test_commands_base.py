@@ -5,7 +5,7 @@ We test that the factories return callables and that they invoke the correct
 detector functions with the expected arguments when called.
 """
 
-import json
+import orjson
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -203,7 +203,7 @@ class TestMakeCmdFacade:
         cmd(args)
 
         captured = capsys.readouterr()
-        data = json.loads(captured.out)
+        data = orjson.loads(captured.out)
         assert "count" in data
         assert data["count"] == 0
 
@@ -237,7 +237,7 @@ class TestMakeCmdSmells:
         cmd(args)
 
         captured = capsys.readouterr()
-        data = json.loads(captured.out)
+        data = orjson.loads(captured.out)
         assert "entries" in data
 
     def test_no_smells_prints_clean_message(self, capsys):

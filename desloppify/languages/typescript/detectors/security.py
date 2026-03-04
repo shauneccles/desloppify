@@ -11,6 +11,7 @@ from desloppify.base.signal_patterns import SERVICE_ROLE_TOKEN_RE, is_server_onl
 from desloppify.engine.detectors.security import rules as security_detector_mod
 from desloppify.engine.policy.zones import FileZoneMap, Zone
 from desloppify.languages.typescript.detectors.contracts import DetectorResult
+from desloppify.engine.parallel_utils import process_files_parallel
 
 # ── Patterns ──
 
@@ -77,6 +78,73 @@ def _make_security_entry(
     )
 
 
+# ── Parallel Processing Support ─────────────────────────────────────────────
+
+
+def _process_security_file(filepath: str, zone_map: FileZoneMap | None) -> tuple[list[dict], int]:
+    """Process a single TS file for security issues.
+
+    Returns a tuple of (entries, was_scanned) where was_scanned indicates the
+    file passed zone filters and was successfully read.
+    """
+    if zone_map is not None:
+        zone = zone_map.get(filepath)
+        if zone in (Zone.TEST, Zone.CONFIG, Zone.GENERATED, Zone.VENDOR):
+            return [], 0
+
+    try:
+        content = Path(filepath).read_text(errors="replace")
+    except OSError as exc:
+        log_best_effort_failure(
+            logger, f"read TypeScript security source {filepath}", exc
+        )
+        return [], 0
+
+    entries: list[dict] = []
+    normalized_path = filepath.replace("\\", "/")
+    is_server_only = is_server_only_path(normalized_path)
+    lines = content.splitlines()
+    has_dev_guard = "__IS_DEV_ENV__" in content or "isDev" in content
+
+    for line_num, line in enumerate(lines, 1):
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        entries.extend(
+            _line_security_findings(
+                filepath=filepath,
+                normalized_path=normalized_path,
+                lines=lines,
+                line_num=line_num,
+                line=line,
+                is_server_only=is_server_only,
+                has_dev_guard=has_dev_guard,
+            )
+        )
+
+    entries.extend(
+        _file_level_security_findings(
+            filepath=filepath,
+            normalized_path=normalized_path,
+            lines=lines,
+            content=content,
+        )
+    )
+
+    return entries, 1
+
+
+def _security_batch_worker(files: list[str], zone_map: FileZoneMap | None) -> tuple[list[dict], int]:
+    """Worker function to process a batch of TS files for security issues."""
+    results: list[dict] = []
+    scanned = 0
+    for filepath in files:
+        entries, was_scanned = _process_security_file(filepath, zone_map)
+        results.extend(entries)
+        scanned += was_scanned
+    return results, scanned
+
+
 def detect_ts_security(
     files: list[str],
     zone_map: FileZoneMap | None,
@@ -93,6 +161,17 @@ def detect_ts_security_result(
     zone_map: FileZoneMap | None,
 ) -> DetectorResult[dict]:
     """Detect TypeScript-specific security issues with explicit result contract."""
+
+    # Use parallel processing for CPU-intensive line-by-line pattern matching
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_security_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="TS security detection",
+        zone_map=zone_map,
+    )
+
     entries: list[dict] = []
     scanned = 0
 

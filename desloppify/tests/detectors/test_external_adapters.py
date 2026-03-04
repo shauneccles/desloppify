@@ -8,7 +8,7 @@ Each adapter must:
 
 from __future__ import annotations
 
-import json
+import orjson
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -18,8 +18,10 @@ from desloppify.languages.typescript.detectors.knip_adapter import detect_with_k
 
 
 class TestKnipAdapter:
-    def _run_detect(self, stdout: str):
+    def _run_detect(self, stdout: str | bytes):
         """Patch subprocess.run to return a synthetic Knip result."""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8")
         mock_result = MagicMock()
         mock_result.stdout = stdout
         with patch("subprocess.run", return_value=mock_result):
@@ -40,13 +42,13 @@ class TestKnipAdapter:
         assert self._run_detect(stdout="not-json") is None
 
     def test_empty_knip_output_returns_empty_list(self):
-        result = self._run_detect(stdout=json.dumps({"issues": []}))
+        result = self._run_detect(stdout=orjson.dumps({"issues": []}))
         assert result == []
 
     def test_parses_dead_exports(self, tmp_path):
         f = tmp_path / "utils.ts"
         f.write_text("export function unused() {}")
-        payload = json.dumps(
+        payload = orjson.dumps(
             {
                 "issues": [
                     {
@@ -71,7 +73,7 @@ class TestKnipAdapter:
     def test_parses_dead_type_exports(self, tmp_path):
         f = tmp_path / "types.ts"
         f.write_text("export type MyType = string;")
-        payload = json.dumps(
+        payload = orjson.dumps(
             {
                 "issues": [
                     {
@@ -89,7 +91,7 @@ class TestKnipAdapter:
         assert any(e["kind"] == "type" and e["name"] == "MyType" for e in result)
 
     def test_skips_files_outside_scan_path(self, tmp_path):
-        payload = json.dumps(
+        payload = orjson.dumps(
             {
                 "issues": [
                     {
@@ -113,7 +115,9 @@ from desloppify.languages.python.detectors.ruff_smells import detect_with_ruff_s
 
 
 class TestRuffSmellsAdapter:
-    def _run_detect(self, stdout: str):
+    def _run_detect(self, stdout: str | bytes):
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8")
         mock_result = MagicMock()
         mock_result.stdout = stdout
 
@@ -149,7 +153,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 10, "column": 4},
             }
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result is not None
         assert len(result) == 1
         entry = result[0]
@@ -167,7 +171,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 5, "column": 8},
             }
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "none_comparison" for e in result)
 
@@ -180,7 +184,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 3, "column": 0},
             }
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "invalid_escape" for e in result)
 
@@ -205,7 +209,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 7, "column": 0},
             },
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result is not None
         none_entries = [e for e in result if e["id"] == "none_comparison"]
         assert len(none_entries) == 1  # grouped under one code
@@ -220,7 +224,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 1, "column": 0},
             }
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result == []
 
     def test_smell_entry_has_required_fields(self):
@@ -232,7 +236,7 @@ class TestRuffSmellsAdapter:
                 "location": {"row": 20, "column": 8},
             }
         ]
-        result = self._run_detect(stdout=json.dumps(diagnostics))
+        result = self._run_detect(stdout=orjson.dumps(diagnostics))
         assert result is not None and len(result) == 1
         entry = result[0]
         assert "id" in entry
@@ -253,9 +257,13 @@ from desloppify.languages.python.detectors.bandit_adapter import (  # noqa: E402
 
 class TestBanditAdapter:
     def _bandit_result(self, results: list[dict], metrics: dict | None = None) -> str:
-        return json.dumps({"results": results, "errors": [], "metrics": metrics or {}})
+        return orjson.dumps(
+            {"results": results, "errors": [], "metrics": metrics or {}}
+        ).decode("utf-8")
 
-    def _run_detect(self, stdout: str, tmp_path=None):
+    def _run_detect(self, stdout: str | bytes, tmp_path=None):
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8")
         mock_result = MagicMock()
         mock_result.stdout = stdout
         path = tmp_path or Path("/fake/project")
@@ -646,7 +654,7 @@ class TestJscpdAdapter:
 
     def test_detect_command_includes_artifact_ignores(self, tmp_path):
         report_file = tmp_path / "jscpd-report.json"
-        report_file.write_text(json.dumps({"duplicates": []}))
+        report_file.write_text(orjson.dumps({"duplicates": []}).decode("utf-8"))
 
         fake_dirs = [
             str(tmp_path / "build"),
@@ -698,7 +706,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 5, "column": 0},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "bare_except" for e in result)
 
@@ -711,7 +719,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 8, "column": 4},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "broad_except" for e in result)
 
@@ -724,7 +732,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 3, "column": 0},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "mutable_default" for e in result)
 
@@ -737,7 +745,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 10, "column": 4},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "mutable_class_var" for e in result)
 
@@ -750,7 +758,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 7, "column": 4},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "global_keyword" for e in result)
 
@@ -763,7 +771,7 @@ class TestRuffSmellsAdapterExtended:
                 "location": {"row": 1, "column": 0},
             }
         ]
-        result = self._run_detect(json.dumps(diagnostics))
+        result = self._run_detect(orjson.dumps(diagnostics))
         assert result is not None
         assert any(e["id"] == "star_import" for e in result)
 

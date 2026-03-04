@@ -1,7 +1,7 @@
 """Codebase treemap visualization with HTML output and LLM-readable tree text."""
 
 import argparse
-import json
+import orjson
 import logging
 import sys
 from collections import defaultdict
@@ -248,7 +248,7 @@ def generate_visualization(
         issues_by_file = _issues_by_file(state)
         tree = _build_tree(files, dep_graph, issues_by_file)
         # Escape </ to prevent </script> in filenames from breaking HTML
-        tree_json = json.dumps(tree).replace("</", r"<\/")
+        tree_json = orjson.dumps(tree).decode("utf-8").replace("</", r"<\/")
 
         # Stats for header
         total_files = len(files)

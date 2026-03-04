@@ -1,6 +1,6 @@
 """Tests for desloppify.config — project-wide configuration management."""
 
-import json
+import orjson
 
 import pytest
 
@@ -68,7 +68,7 @@ class TestLoadSaveConfig:
     def test_fills_missing_keys(self, tmp_path):
         p = tmp_path / "config.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"review_max_age_days": 14}))
+        p.write_text(orjson.dumps({"review_max_age_days": 14}).decode("utf-8"))
         cfg = load_config(p)
         assert cfg["review_max_age_days"] == 14
         # Missing keys get defaults
@@ -86,12 +86,12 @@ class TestLoadSaveConfig:
         p = tmp_path / "config.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
-            json.dumps(
+            orjson.dumps(
                 {
                     "csharp_corroboration_min_signals": 3,
                     "csharp_high_fanout_threshold": 8,
                 }
-            )
+            ).decode("utf-8")
         )
         cfg = load_config(p)
         assert cfg.get("csharp_corroboration_min_signals") == 3
@@ -102,14 +102,14 @@ class TestLoadSaveConfig:
     def test_invalid_badge_path_in_file_resets_to_default(self, tmp_path):
         p = tmp_path / "config.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"badge_path": "assets/"}))
+        p.write_text(orjson.dumps({"badge_path": "assets/"}).decode("utf-8"))
         cfg = load_config(p)
         assert cfg["badge_path"] == "scorecard.png"
 
     def test_nested_badge_path_preserved(self, tmp_path):
         p = tmp_path / "config.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"badge_path": "assets/scorecard.png"}))
+        p.write_text(orjson.dumps({"badge_path": "assets/scorecard.png"}).decode("utf-8"))
         cfg = load_config(p)
         assert cfg["badge_path"] == "assets/scorecard.png"
 
@@ -283,7 +283,7 @@ class TestMigrateFromStateFiles:
             "issues": {},
         }
         state_file = state_dir / "state-python.json"
-        state_file.write_text(json.dumps(state_data))
+        state_file.write_text(orjson.dumps(state_data).decode("utf-8"))
         config_path = state_dir / "config.json"
 
         result = _migrate_from_state_files(config_path)
@@ -291,7 +291,7 @@ class TestMigrateFromStateFiles:
         assert "dist" in result.get("exclude", [])
 
         # State file should have config key removed
-        updated_state = json.loads(state_file.read_text())
+        updated_state = orjson.loads(state_file.read_text())
         assert "config" not in updated_state
 
         # Config file should be written
@@ -311,8 +311,8 @@ class TestMigrateFromStateFiles:
             "config": {"ignore": ["pat2"], "exclude": ["ex1", "ex2"]},
             "issues": {},
         }
-        (state_dir / "state-python.json").write_text(json.dumps(s1))
-        (state_dir / "state-typescript.json").write_text(json.dumps(s2))
+        (state_dir / "state-python.json").write_text(orjson.dumps(s1).decode("utf-8"))
+        (state_dir / "state-typescript.json").write_text(orjson.dumps(s2).decode("utf-8"))
         config_path = state_dir / "config.json"
 
         result = _migrate_from_state_files(config_path)
@@ -349,8 +349,8 @@ class TestMigrateFromStateFiles:
             "config": {"zone_overrides": {"b.ts": "vendor"}},
             "issues": {},
         }
-        (state_dir / "state-python.json").write_text(json.dumps(s1))
-        (state_dir / "state-typescript.json").write_text(json.dumps(s2))
+        (state_dir / "state-python.json").write_text(orjson.dumps(s1).decode("utf-8"))
+        (state_dir / "state-typescript.json").write_text(orjson.dumps(s2).decode("utf-8"))
         config_path = state_dir / "config.json"
 
         result = _migrate_from_state_files(config_path)
@@ -371,8 +371,8 @@ class TestMigrateFromStateFiles:
             "config": {"csharp_high_fanout_threshold": 9},
             "issues": {},
         }
-        (state_dir / "state-csharp.json").write_text(json.dumps(s1))
-        (state_dir / "state-csharp-alt.json").write_text(json.dumps(s2))
+        (state_dir / "state-csharp.json").write_text(orjson.dumps(s1).decode("utf-8"))
+        (state_dir / "state-csharp-alt.json").write_text(orjson.dumps(s2).decode("utf-8"))
         config_path = state_dir / "config.json"
 
         result = _migrate_from_state_files(config_path)

@@ -10,6 +10,12 @@ from desloppify.base.runtime_state import RuntimeContext, runtime_scope
 from desloppify.base.discovery.source import clear_source_file_cache_for_tests
 
 
+@pytest.fixture(autouse=True)
+def clear_parallel_env(monkeypatch: pytest.MonkeyPatch):
+    """Prevent shell-level parallel overrides from leaking into test expectations."""
+    monkeypatch.delenv("DESLOPPIFY_PARALLEL", raising=False)
+
+
 @pytest.fixture()
 def set_project_root(tmp_path: Path):
     """Set PROJECT_ROOT to tmp_path via RuntimeContext for the duration of a test."""

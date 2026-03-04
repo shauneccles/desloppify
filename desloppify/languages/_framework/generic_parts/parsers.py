@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import re
 from collections.abc import Callable
@@ -18,8 +18,8 @@ class ToolParserError(ValueError):
 def _load_json_output(output: str, *, parser_name: str) -> object:
     """Decode JSON output or raise a typed parser error."""
     try:
-        return json.loads(output)
-    except (json.JSONDecodeError, ValueError) as exc:
+        return orjson.loads(output)
+    except (orjson.JSONDecodeError, ValueError) as exc:
         raise ToolParserError(
             f"{parser_name} parser could not decode JSON output"
         ) from exc
@@ -123,8 +123,8 @@ def parse_cargo(output: str, scan_path: Path) -> list[dict]:
         if not line:
             continue
         try:
-            data = json.loads(line)
-        except (json.JSONDecodeError, ValueError) as exc:
+            data = orjson.loads(line)
+        except (orjson.JSONDecodeError, ValueError) as exc:
             logger.debug("Skipping unparseable cargo output line: %s", exc)
             continue
         if data.get("reason") != "compiler-message":

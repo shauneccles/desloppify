@@ -37,7 +37,13 @@ def read_coverage_file(
 ) -> CoverageFileReadResult:
     """Read a source file and emit one best-effort warning per context/path."""
     try:
-        return CoverageFileReadResult(ok=True, content=Path(filepath).read_text())
+        path = Path(filepath)
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            log_best_effort_failure(LOGGER, f"{context} utf8 read {filepath}", exc)
+            content = path.read_text(encoding="utf-8", errors="replace")
+        return CoverageFileReadResult(ok=True, content=content)
     except (OSError, UnicodeDecodeError) as exc:
         log_best_effort_failure(logger, f"{context} read {filepath}", exc)
         _warn_read_failure_once(context, filepath, exc.__class__.__name__)

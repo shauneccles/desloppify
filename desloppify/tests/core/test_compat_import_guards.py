@@ -23,7 +23,7 @@ def _runtime_python_files() -> list[tuple[Path, str]]:
 
 
 def _compat_import_violations(path: Path, rel: str) -> list[str]:
-    tree = ast.parse(path.read_text(), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     violations: list[str] = []
 
     for node in ast.walk(tree):

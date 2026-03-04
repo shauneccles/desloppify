@@ -620,6 +620,33 @@ class TestTsRlsBypass:
             os.unlink(path)
 
 
+class TestTsPopulationAccounting:
+    def test_scanned_excludes_test_zone_files(self):
+        prod_path = _write_temp_file("const x = eval(userInput);", suffix=".ts")
+        test_path = _write_temp_file("const y = eval(userInput);", suffix=".ts")
+        try:
+            zm = FileZoneMap.__new__(FileZoneMap)
+            zm._map = {prod_path: Zone.PRODUCTION, test_path: Zone.TEST}
+            zm._overrides = None
+
+            result = detect_ts_security_result([prod_path, test_path], zm)
+            assert result.population_size == 1
+            assert len(result.entries) >= 1
+        finally:
+            os.unlink(prod_path)
+            os.unlink(test_path)
+
+    def test_scanned_excludes_unreadable_files(self):
+        good_path = _write_temp_file("const x = eval(userInput);", suffix=".ts")
+        bad_path = "/tmp/nonexistent_ts_security_source.ts"
+        try:
+            entries, scanned = detect_ts_security([good_path, bad_path], None)
+            assert scanned == 1
+            assert len(entries) >= 1
+        finally:
+            os.unlink(good_path)
+
+
 # ═══════════════════════════════════════════════════════════
 # Integration Tests
 # ═══════════════════════════════════════════════════════════

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
+import orjson
 import logging
 import os
 import shlex
@@ -179,8 +179,8 @@ def _build_dep_graph_roslyn(
     if not payload_text:
         return None
     try:
-        payload = json.loads(payload_text)
-    except json.JSONDecodeError:
+        payload = orjson.loads(payload_text)
+    except orjson.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
         return None

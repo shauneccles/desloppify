@@ -77,6 +77,7 @@ def resolve_detection_root(
     marker_provider: Callable[[], tuple[str, ...]] | None = None,
 ) -> Path:
     """Best root to auto-detect language from."""
+    project_root = project_root or PROJECT_ROOT
     marker_provider = marker_provider or _lang_config_markers
     markers = marker_provider()
     root = project_root if project_root is not None else get_project_root()
@@ -91,7 +92,20 @@ def resolve_detection_root(
     candidate = candidate.resolve()
     search_root = candidate if candidate.is_dir() else candidate.parent
 
-    for root in (search_root, *search_root.parents):
+    roots_to_check: list[Path] = [search_root]
+    try:
+        search_root.relative_to(project_root)
+        parent = search_root.parent
+        while parent != parent.parent:
+            roots_to_check.append(parent)
+            if parent == project_root:
+                break
+            parent = parent.parent
+    except ValueError:
+        if search_root.parent != search_root:
+            roots_to_check.append(search_root.parent)
+
+    for root in roots_to_check:
         if any((root / marker).exists() for marker in markers):
             return root
     return search_root

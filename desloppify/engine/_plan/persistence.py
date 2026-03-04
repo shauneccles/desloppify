@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import shutil
 import sys
@@ -84,7 +84,7 @@ def save_plan(plan: PlanModel | dict, path: Path | None = None) -> None:
     plan_path = path or PLAN_FILE
     plan_path.parent.mkdir(parents=True, exist_ok=True)
 
-    content = json.dumps(plan, indent=2, default=json_default) + "\n"
+    content = orjson.dumps(plan, option=orjson.OPT_INDENT_2, default=json_default).decode("utf-8") + "\n"
 
     if plan_path.exists():
         backup = plan_path.with_suffix(".json.bak")

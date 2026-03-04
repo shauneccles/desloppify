@@ -9,6 +9,7 @@ from desloppify.engine.detectors.coverage.mapping import (
     transitive_coverage,
 )
 from desloppify.engine.policy.zones import FileZoneMap
+from desloppify.engine.parallel_utils import process_files_parallel
 
 from .discovery import (
     _discover_scorable_and_tests,
@@ -18,6 +19,16 @@ from .discovery import (
 from .issues import (
     _generate_issues,
 )
+
+_TEST_COVERAGE_PARALLEL_MIN_FILES = 6000
+TestCoverageImportsIndex: TypeAlias = dict[str, set[str]]
+
+
+def _should_parallelize_test_coverage(file_count: int) -> bool:
+    env = os.getenv("DESLOPPIFY_TEST_COVERAGE_PARALLEL")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return file_count >= _TEST_COVERAGE_PARALLEL_MIN_FILES
 
 
 def detect_test_coverage(
@@ -61,5 +72,6 @@ def detect_test_coverage(
         graph,
         lang_name,
         complexity_map=complexity_map,
+        parsed_imports_by_test=parsed_imports_by_test,
     )
     return entries, potential

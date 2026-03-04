@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from types import SimpleNamespace
 
 import pytest
@@ -193,9 +193,9 @@ def test_load_dimensions_for_lang_override_replaces_dimension_list(
         },
         "dimension_prompts_remove": ["shared_dim"],
     }
-    (shared_dir / "dimensions.json").write_text(json.dumps(shared_payload))
+    (shared_dir / "dimensions.json").write_text(orjson.dumps(shared_payload).decode("utf-8"))
     (lang_dir / "python" / "review_data" / "dimensions.override.json").write_text(
-        json.dumps(override_payload)
+        orjson.dumps(override_payload).decode("utf-8")
     )
 
     monkeypatch.setattr(dimensions_data_mod, "_DATA_DIR", shared_dir)
@@ -228,7 +228,7 @@ def test_load_dimensions_for_lang_falls_back_to_shared(tmp_path, monkeypatch):
         },
         "system_prompt": "s" * 120,
     }
-    (shared_dir / "dimensions.json").write_text(json.dumps(shared_payload))
+    (shared_dir / "dimensions.json").write_text(orjson.dumps(shared_payload).decode("utf-8"))
 
     monkeypatch.setattr(dimensions_data_mod, "_DATA_DIR", shared_dir)
     monkeypatch.setattr(dimensions_data_mod, "_LANG_DIR", lang_dir)
@@ -272,10 +272,10 @@ def test_load_dimensions_for_lang_applies_override_patch(
         },
         "system_prompt_append": "lang-tail",
     }
-    (shared_dir / "dimensions.json").write_text(json.dumps(shared_payload))
+    (shared_dir / "dimensions.json").write_text(orjson.dumps(shared_payload).decode("utf-8"))
     (
         lang_dir / "python" / "review_data" / "dimensions.override.json"
-    ).write_text(json.dumps(override_payload))
+    ).write_text(orjson.dumps(override_payload).decode("utf-8"))
 
     monkeypatch.setattr(dimensions_data_mod, "_DATA_DIR", shared_dir)
     monkeypatch.setattr(dimensions_data_mod, "_LANG_DIR", lang_dir)
@@ -316,10 +316,10 @@ def test_load_dimensions_for_lang_override_remove_and_append(
             "c": {"description": "C", "look_for": ["x"], "skip": ["y"]},
         },
     }
-    (shared_dir / "dimensions.json").write_text(json.dumps(shared_payload))
+    (shared_dir / "dimensions.json").write_text(orjson.dumps(shared_payload).decode("utf-8"))
     (
         lang_dir / "python" / "review_data" / "dimensions.override.json"
-    ).write_text(json.dumps(override_payload))
+    ).write_text(orjson.dumps(override_payload).decode("utf-8"))
 
     monkeypatch.setattr(dimensions_data_mod, "_DATA_DIR", shared_dir)
     monkeypatch.setattr(dimensions_data_mod, "_LANG_DIR", lang_dir)
@@ -395,10 +395,10 @@ def test_load_dimensions_for_lang_meta_enabled_dimension_requires_no_append(
             }
         }
     }
-    (shared_dir / "dimensions.json").write_text(json.dumps(shared_payload))
+    (shared_dir / "dimensions.json").write_text(orjson.dumps(shared_payload).decode("utf-8"))
     (
         lang_dir / "python" / "review_data" / "dimensions.override.json"
-    ).write_text(json.dumps(override_payload))
+    ).write_text(orjson.dumps(override_payload).decode("utf-8"))
 
     monkeypatch.setattr(dimensions_data_mod, "_DATA_DIR", shared_dir)
     monkeypatch.setattr(dimensions_data_mod, "_LANG_DIR", lang_dir)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -187,7 +187,7 @@ def test_import_attested_external_rejects_untrusted_provenance(tmp_path, capsys)
 
 def test_import_attested_external_accepts_claude_blind_provenance(tmp_path):
     blind_packet = tmp_path / "review_packet_blind.json"
-    blind_packet.write_text(json.dumps({"command": "review", "dimensions": ["naming_quality"]}))
+    blind_packet.write_text(orjson.dumps({"command": "review", "dimensions": ["naming_quality"]}).decode("utf-8"))
     packet_hash = hashlib.sha256(blind_packet.read_bytes()).hexdigest()
 
     payload = {
@@ -221,7 +221,7 @@ def test_import_attested_external_accepts_claude_blind_provenance(tmp_path):
 
 def test_import_attested_external_rejects_non_claude_runner(tmp_path, capsys):
     blind_packet = tmp_path / "review_packet_blind.json"
-    blind_packet.write_text(json.dumps({"command": "review", "dimensions": ["naming_quality"]}))
+    blind_packet.write_text(orjson.dumps({"command": "review", "dimensions": ["naming_quality"]}).decode("utf-8"))
     packet_hash = hashlib.sha256(blind_packet.read_bytes()).hexdigest()
 
     payload = {
@@ -278,7 +278,7 @@ def test_import_attested_external_rejects_allow_partial_combo(tmp_path, capsys):
 
 def test_import_external_trusted_provenance_still_defaults_to_issues_only(tmp_path):
     blind_packet = tmp_path / "review_packet_blind.json"
-    blind_packet.write_text(json.dumps({"command": "review", "dimensions": ["naming_quality"]}))
+    blind_packet.write_text(orjson.dumps({"command": "review", "dimensions": ["naming_quality"]}).decode("utf-8"))
     packet_hash = hashlib.sha256(blind_packet.read_bytes()).hexdigest()
 
     payload = {
@@ -336,7 +336,7 @@ def test_import_trusted_internal_source_applies_assessments(tmp_path):
 
 def test_import_hash_mismatch_falls_back_to_issues_only(tmp_path):
     blind_packet = tmp_path / "review_packet_blind.json"
-    blind_packet.write_text(json.dumps({"command": "review"}))
+    blind_packet.write_text(orjson.dumps({"command": "review"}).decode("utf-8"))
     wrong_hash = "0" * 64
 
     payload = {
@@ -604,8 +604,8 @@ def test_write_packet_snapshot_redacts_target_from_blind_packet(tmp_path):
         safe_write_text_fn=_safe_write,
     )
 
-    immutable_payload = json.loads(packet_path.read_text())
-    blind_payload = json.loads(blind_path.read_text())
+    immutable_payload = orjson.loads(packet_path.read_text())
+    blind_payload = orjson.loads(blind_path.read_text())
 
     assert immutable_payload["config"]["target_strict_score"] == 98
     assert "target_strict_score" not in blind_payload["config"]

@@ -112,6 +112,12 @@ def create_parser(*, langs: list[str], detector_names: list[str]) -> argparse.Ar
         action="version",
         version=_cli_version_string(),
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose debug logging",
+    )
     sub = parser.add_subparsers(
         dest="command",
         parser_class=_NoAbbrevArgumentParser,

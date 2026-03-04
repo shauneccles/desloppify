@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -67,7 +67,7 @@ def display_entries(
     """Standard JSON/empty/table display for detect commands."""
     if getattr(args, "json", False):
         payload = json_payload or {"count": len(entries), "entries": entries}
-        print(json.dumps(payload, indent=2))
+        print(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return True
     if not entries:
         print(colorize(empty_msg, "green"))

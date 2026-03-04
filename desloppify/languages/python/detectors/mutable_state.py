@@ -208,6 +208,148 @@ def _detect_in_module(filepath: str, tree: ast.Module, entries: list[dict]):
 # ── Import-binding footgun detection ─────────────────────
 
 
+def _process_mutable_file(filepath: str) -> tuple[list[dict], str | None, set[str]]:
+    """Process a single Python file for mutable state detection.
+    
+    Returns (entries, module_path, reassigned_names).
+    """
+    try:
+        p = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else PROJECT_ROOT / filepath
+        )
+        content = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable python file %s in mutable-state pass: %s",
+            filepath,
+            exc,
+        )
+        return [], None, set()
+
+    try:
+        tree = ast.parse(content, filename=filepath)
+    except SyntaxError as exc:
+        logger.debug(
+            "Skipping unparseable python file %s in mutable-state pass: %s",
+            filepath,
+            exc,
+        )
+        return [], None, set()
+
+    entries: list[dict] = []
+    _detect_in_module(filepath, tree, entries)
+
+    # Track which modules have reassigned globals (need `global` keyword)
+    mutables = _collect_module_level_mutables(tree)
+    module_path = None
+    reassigned = set()
+    
+    if mutables:
+        # Only track names that are reassigned (not just mutated via methods)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            global_names: set[str] = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Global):
+                    global_names.update(child.names)
+            for name in global_names:
+                if name in mutables:
+                    reassigned.add(name)
+        
+        if reassigned:
+            # Convert filepath to dotted module path
+            module_path = filepath.replace("/", ".").replace("\\", ".")
+            if module_path.endswith(".py"):
+                module_path = module_path[:-3]
+
+    return entries, module_path, reassigned
+
+
+def _mutable_phase1_batch_worker(filepaths: list[str]) -> tuple[list[dict], dict[str, set[str]]]:
+    """Worker function to process a batch of Python files for mutable state (Phase 1)."""
+    entries = []
+    mutated_names: dict[str, set[str]] = {}
+    
+    for filepath in filepaths:
+        file_entries, module_path, reassigned = _process_mutable_file(filepath)
+        entries.extend(file_entries)
+        if module_path and reassigned:
+            mutated_names[module_path] = reassigned
+    
+    return entries, mutated_names
+
+
+def _process_stale_import_file(filepath: str, mutated_names: dict[str, set[str]]) -> list[dict]:
+    """Process a single Python file for stale import detection."""
+    try:
+        p = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else PROJECT_ROOT / filepath
+        )
+        content = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable python file %s in stale-import pass: %s",
+            filepath,
+            exc,
+        )
+        return []
+
+    try:
+        tree = ast.parse(content, filename=filepath)
+    except SyntaxError as exc:
+        logger.debug(
+            "Skipping unparseable python file %s in stale-import pass: %s",
+            filepath,
+            exc,
+        )
+        return []
+
+    entries = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = node.module or ""
+        # Check if any imported name is a mutated global in the source module
+        for source_module, names in mutated_names.items():
+            # Match by suffix (e.g., "desloppify.utils" matches "from .utils import")
+            if not (
+                module == source_module
+                or module.endswith(f".{source_module}")
+                or source_module.endswith(f".{module}")
+            ):
+                continue
+            for alias in node.names:
+                if alias.name in names:
+                    entries.append(
+                        {
+                            "file": filepath,
+                            "name": alias.name,
+                            "line": node.lineno,
+                            "mutation_lines": [],
+                            "mutation_count": 0,
+                            "confidence": "high",
+                            "summary": (
+                                f"'from {module} import {alias.name}' creates stale binding — "
+                                f"'{alias.name}' is reassigned at runtime. Import the module instead."
+                            ),
+                        }
+                    )
+    return entries
+
+
+def _stale_import_batch_worker(files: list[str], mutated_names: dict[str, set[str]]) -> list[dict]:
+    """Worker function to process a batch of Python files for stale import detection."""
+    results = []
+    for filepath in files:
+        results.extend(_process_stale_import_file(filepath, mutated_names))
+    return results
+
+
 def _detect_stale_imports(
     path: Path,
     mutated_names: dict[str, set[str]],
@@ -287,6 +429,18 @@ def detect_global_mutable_config(path: Path) -> tuple[list[dict], int]:
     Returns (entries, total_files_checked).
     """
     files = find_py_files(path)
+
+    # Phase 1: collect mutated globals per module using parallel processing
+    # Returns list of (entries, mutated_names) tuples from each worker
+    phase1_results = process_files_parallel(
+        files=files,
+        worker_func=_mutable_phase1_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="mutable state detection (phase 1)",
+    )
+    
+    # Aggregate results from all workers
     entries: list[dict] = []
 
     # Phase 1: collect mutated globals per module

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from collections import defaultdict
 
 from desloppify.app.commands.helpers.rendering import (

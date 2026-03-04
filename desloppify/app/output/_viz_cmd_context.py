@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 
 from desloppify import state as state_module
@@ -20,7 +20,7 @@ def load_cmd_context(args: object) -> tuple[Path, object | None, dict | None]:
         scan_state_path = runtime.state_path
         try:
             state = state_module.load_state(scan_state_path)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, orjson.JSONDecodeError) as exc:
             warn_best_effort(
                 "Could not load scan state for visualization "
                 f"({scan_state_path}, {exc.__class__.__name__}: {exc}); "

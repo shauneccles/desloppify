@@ -1,6 +1,6 @@
 """Tests for C# dependency graph construction."""
 
-import json
+import orjson
 import os
 import subprocess
 from pathlib import Path
@@ -54,7 +54,7 @@ def _require_roslyn_payload(roslyn_cmd: str, root: Path):
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout or "{}")
+    payload = orjson.loads(proc.stdout or "{}")
     assert isinstance(payload, dict)
     assert "files" in payload or "edges" in payload
 
@@ -184,14 +184,14 @@ def test_build_dep_graph_uses_project_assets_for_transitive_project_references(
     assets_file = app_dir / "obj" / "project.assets.json"
     assets_file.parent.mkdir(parents=True, exist_ok=True)
     assets_file.write_text(
-        json.dumps(
+        orjson.dumps(
             {
                 "libraries": {
                     "Lib/1.0.0": {"type": "project", "path": "../Lib/Lib.csproj"},
                     "Core/1.0.0": {"type": "project", "path": "../Core/Core.csproj"},
                 }
             }
-        )
+        ).decode("utf-8")
     )
 
     graph_with_assets = build_dep_graph(tmp_path)
@@ -241,14 +241,14 @@ def test_build_dep_graph_uses_roslyn_payload_when_available(tmp_path, monkeypatc
 
     class _Proc:
         returncode = 0
-        stdout = json.dumps(
+        stdout = orjson.dumps(
             {
                 "files": [
                     {"file": str(source), "imports": [str(target)]},
                     {"file": str(target), "imports": []},
                 ]
             }
-        ).encode("utf-8")
+        )
         stderr = b""
 
     monkeypatch.setenv("DESLOPPIFY_CSHARP_ROSLYN_CMD", "fake-roslyn")
@@ -266,9 +266,7 @@ def test_build_dep_graph_uses_roslyn_payload_when_available(tmp_path, monkeypatc
 
 def test_build_dep_graph_roslyn_invokes_subprocess_without_shell(tmp_path, monkeypatch):
     source = (tmp_path / "Program.cs").resolve()
-    payload = json.dumps({"files": [{"file": str(source), "imports": []}]}).encode(
-        "utf-8"
-    )
+    payload = orjson.dumps({"files": [{"file": str(source), "imports": []}]})
 
     class _Proc:
         returncode = 0
@@ -301,9 +299,7 @@ def test_build_dep_graph_roslyn_invokes_subprocess_without_shell(tmp_path, monke
 
 def test_build_dep_graph_prefers_explicit_roslyn_cmd_over_env(tmp_path, monkeypatch):
     source = (tmp_path / "Program.cs").resolve()
-    payload = json.dumps({"files": [{"file": str(source), "imports": []}]}).encode(
-        "utf-8"
-    )
+    payload = orjson.dumps({"files": [{"file": str(source), "imports": []}]})
 
     class _Proc:
         returncode = 0

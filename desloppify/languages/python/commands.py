@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,15 +94,15 @@ def cmd_orphaned(args: argparse.Namespace) -> None:
     )
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(entries),
                     "entries": [
                         {"file": rel(e["file"]), "loc": e["loc"]} for e in entries
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
     if not entries:
@@ -118,7 +118,7 @@ def cmd_orphaned(args: argparse.Namespace) -> None:
 def cmd_unused(args: argparse.Namespace) -> None:
     entries, _ = unused_detector_mod.detect_unused(Path(args.path))
     if getattr(args, "json", False):
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not entries:
         print(colorize("No unused symbols found.", "green"))
@@ -131,7 +131,7 @@ def cmd_unused(args: argparse.Namespace) -> None:
 def cmd_deps(args: argparse.Namespace) -> None:
     graph = deps_detector_mod.build_dep_graph(Path(args.path))
     if getattr(args, "json", False):
-        print(json.dumps({"files": len(graph)}, indent=2))
+        print(orjson.dumps({"files": len(graph)}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     print(colorize(f"\nPython dependency graph: {len(graph)} files\n", "bold"))
     by_importers = sorted(graph.items(), key=lambda x: -x[1]["importer_count"])
@@ -146,7 +146,7 @@ def cmd_cycles(args: argparse.Namespace) -> None:
     graph = deps_detector_mod.build_dep_graph(Path(args.path))
     cycles, _ = graph_detector_mod.detect_cycles(graph)
     if getattr(args, "json", False):
-        print(json.dumps({"count": len(cycles), "cycles": cycles}, indent=2))
+        print(orjson.dumps({"count": len(cycles), "cycles": cycles}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not cycles:
         print(colorize("No import cycles found.", "green"))
@@ -176,7 +176,7 @@ def cmd_dupes(args: argparse.Namespace) -> None:
         functions, threshold=getattr(args, "threshold", None) or 0.8
     )
     if getattr(args, "json", False):
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not entries:
         print(colorize("No duplicate functions found.", "green"))

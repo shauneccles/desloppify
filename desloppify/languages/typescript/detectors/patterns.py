@@ -14,7 +14,7 @@ Only competing families produce issues for the scan pipeline.
 """
 
 import argparse
-import json
+import orjson
 import logging
 import re
 from collections import defaultdict
@@ -91,6 +91,98 @@ PATTERN_FAMILIES = {
 logger = logging.getLogger(__name__)
 
 
+# ── Parallel Processing Support ─────────────────────────────────────────────
+
+
+def _process_pattern_file(
+    filepath: str,
+    compiled: dict[str, dict[str, re.Pattern]],
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, list[dict]]]]]:
+    """Process a single TS file for pattern matching.
+    
+    Returns (census, evidence) for this file only.
+    """
+    try:
+        area = get_area(filepath)
+        p = Path(filepath) if Path(filepath).is_absolute() else Path(resolve_path(filepath))
+        content = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        log_best_effort_failure(
+            logger, f"read TypeScript pattern candidate {filepath}", exc
+        )
+        return {}, {}
+
+    census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    evidence: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+
+    for family_name, patterns in compiled.items():
+        for name, regex in patterns.items():
+            match = regex.search(content)
+            if match:
+                census[area][family_name].add(name)
+                line = content[:match.start()].count("\n") + 1
+                evidence[area][family_name][name].append(
+                    {"file": rel(filepath), "line": line}
+                )
+
+    return dict(census), dict(evidence)
+
+
+def _patterns_batch_worker(
+    files: list[str],
+    compiled: dict[str, dict[str, re.Pattern]],
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, list[dict]]]]]:
+    """Worker function to process a batch of TS files for pattern matching."""
+    
+    # Aggregate results from all files in the batch
+    batch_census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    batch_evidence: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+    
+    for filepath in files:
+        file_census, file_evidence = _process_pattern_file(filepath, compiled)
+        
+        # Merge census (sets)
+        for area, families in file_census.items():
+            for family_name, patterns in families.items():
+                batch_census[area][family_name].update(patterns)
+        
+        # Merge evidence (lists)
+        for area, families in file_evidence.items():
+            for family_name, pattern_dict in families.items():
+                for pattern_name, entries in pattern_dict.items():
+                    batch_evidence[area][family_name][pattern_name].extend(entries)
+    
+    return dict(batch_census), dict(batch_evidence)
+
+
+def _merge_census_and_evidence(
+    results: list[tuple[dict, dict]],
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, list[dict]]]]]:
+    """Merge census and evidence from multiple workers."""
+    final_census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    final_evidence: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+    
+    for census, evidence in results:
+        # Merge census (sets)
+        for area, families in census.items():
+            for family_name, patterns in families.items():
+                final_census[area][family_name].update(patterns)
+        
+        # Merge evidence (lists)
+        for area, families in evidence.items():
+            for family_name, pattern_dict in families.items():
+                for pattern_name, entries in pattern_dict.items():
+                    final_evidence[area][family_name][pattern_name].extend(entries)
+    
+    return dict(final_census), dict(final_evidence)
+
+
 def _build_census(path: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, list[dict]]]]]:
     """Build matrix: area → family → set of patterns used + file/line evidence.
 
@@ -98,12 +190,6 @@ def _build_census(path: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str,
     pattern presence (file-level, not instance count).
     """
     files = find_ts_files(path)
-    # area → family → set of pattern names found
-    census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    # area -> family -> pattern -> [{"file": rel_path, "line": line_no}]
-    evidence: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(list))
-    )
 
     # Pre-compile regexes from all families
     compiled: dict[str, dict[str, re.Pattern]] = {}
@@ -112,26 +198,54 @@ def _build_census(path: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str,
             name: re.compile(regex) for name, regex in family["patterns"].items()
         }
 
-    for filepath in files:
-        try:
-            area = get_area(filepath)
-            p = Path(filepath) if Path(filepath).is_absolute() else Path(resolve_path(filepath))
-            content = p.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            log_best_effort_failure(
-                logger, f"read TypeScript pattern candidate {filepath}", exc
-            )
-            continue
+    # Use parallel processing for CPU-intensive regex matching
+    # The framework doesn't natively support tuple returns, so we handle aggregation manually
+    try:
+        from desloppify.engine.parallel_utils import should_use_parallel, calculate_workers
+        import concurrent.futures
+        import os
+        
+        if should_use_parallel(len(files), min_files=100):
+            num_workers = calculate_workers()
+            chunk_size = max(1, len(files) // num_workers)
+            batches = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+            
+            with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [
+                    executor.submit(_patterns_batch_worker, batch, compiled)
+                    for batch in batches
+                ]
+                results = []
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:
+                        logger.warning("Pattern worker failed: %s", exc, exc_info=True)
+            
+            return _merge_census_and_evidence(results)
+        
+    except Exception as exc:
+        logger.debug("Parallel processing unavailable for patterns, using sequential: %s", exc)
 
-        for family_name, patterns in compiled.items():
-            for name, regex in patterns.items():
-                match = regex.search(content)
-                if match:
-                    census[area][family_name].add(name)
-                    line = content[:match.start()].count("\n") + 1
-                    evidence[area][family_name][name].append(
-                        {"file": rel(filepath), "line": line}
-                    )
+    # Fallback to sequential processing
+    census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    evidence: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+
+    for filepath in files:
+        file_census, file_evidence = _process_pattern_file(filepath, compiled)
+        
+        # Merge census (sets)
+        for area, families in file_census.items():
+            for family_name, patterns in families.items():
+                census[area][family_name].update(patterns)
+        
+        # Merge evidence (lists)
+        for area, families in file_evidence.items():
+            for family_name, pattern_dict in families.items():
+                for pattern_name, entries in pattern_dict.items():
+                    evidence[area][family_name][pattern_name].extend(entries)
 
     return dict(census), {
         area: {
@@ -262,7 +376,7 @@ def cmd_patterns(args: argparse.Namespace) -> None:
             for area, families in census.items()
         }
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "areas": len(census),
                     "anomalies": len(anomalies),
@@ -273,8 +387,8 @@ def cmd_patterns(args: argparse.Namespace) -> None:
                     "census": serializable,
                     "anomaly_details": anomalies,
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

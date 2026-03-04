@@ -1,6 +1,6 @@
 """Python unused detection via ruff (F401=unused imports, F841=unused vars)."""
 
-import json
+import orjson
 import re
 import subprocess
 from pathlib import Path
@@ -176,8 +176,8 @@ def _try_ruff(path: Path, category: str) -> list[dict] | None:
         return []
 
     try:
-        diagnostics = json.loads(result.stdout)
-    except json.JSONDecodeError:
+        diagnostics = orjson.loads(result.stdout)
+    except orjson.JSONDecodeError:
         return None
 
     exclusions = _get_exclusions()

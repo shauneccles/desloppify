@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,13 +32,13 @@ class TestJsonEscaping:
 
     def test_script_tag_in_filename_escaped(self):
         """A filename containing </script> should not break the HTML."""
-        tree_json = json.dumps({"name": "</script><script>alert(1)</script>"})
+        tree_json = orjson.dumps({"name": "</script><script>alert(1)</script>"}).decode("utf-8")
         escaped = tree_json.replace("</", r"<\/")
         assert "</script>" not in escaped
         assert r"<\/" in escaped
 
     def test_normal_filename_unchanged(self):
-        tree_json = json.dumps({"name": "MyComponent.tsx"})
+        tree_json = orjson.dumps({"name": "MyComponent.tsx"}).decode("utf-8")
         escaped = tree_json.replace("</", r"<\/")
         assert "MyComponent.tsx" in escaped
 

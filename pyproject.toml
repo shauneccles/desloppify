@@ -26,7 +26,9 @@ classifiers = [
     "Topic :: Software Development :: Testing",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "orjson>=3.11.7",
+]
 
 [project.urls]
 Homepage = "https://github.com/peteromallet/desloppify"

@@ -1,0 +1,128 @@
+"""Cross-platform text search — grep replacements for file content scanning."""
+
+from __future__ import annotations
+
+import os
+import re
+
+from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.core.runtime_state import current_runtime_context
+from desloppify.engine.parallel_utils import process_files_parallel
+
+
+def read_file_text(filepath: str) -> str | None:
+    """Read a file as text, with optional caching."""
+    return current_runtime_context().file_text_cache.read(filepath)
+
+
+def _grep_files_worker(
+    files: list[str], compiled: re.Pattern
+) -> list[tuple[str, int, str]]:
+    """Worker function to search files for a regex pattern."""
+    results: list[tuple[str, int, str]] = []
+    for filepath in files:
+        abs_path = filepath if os.path.isabs(filepath) else str(PROJECT_ROOT / filepath)
+        content = read_file_text(abs_path)
+        if content is None:
+            continue
+        for lineno, line in enumerate(content.splitlines(), 1):
+            if compiled.search(line):
+                results.append((filepath, lineno, line))
+    return results
+
+
+def grep_files(
+    pattern: str, file_list: list[str], *, flags: int = 0
+) -> list[tuple[str, int, str]]:
+    """Search files for a regex pattern. Returns list of (filepath, lineno, line_text)."""
+    compiled = re.compile(pattern, flags)
+    
+    results = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_files_worker,
+        mode="extend",
+        min_files=50,
+        task_name="grep search",
+        compiled=compiled,
+    )
+    
+    return results
+
+
+def _grep_files_containing_worker(
+    files: list[str], combined: re.Pattern, names: set[str]
+) -> dict[str, set[str]]:
+    """Worker function to find which files contain which names."""
+    name_to_files: dict[str, set[str]] = {}
+    for filepath in files:
+        abs_path = filepath if os.path.isabs(filepath) else str(PROJECT_ROOT / filepath)
+        content = read_file_text(abs_path)
+        if content is None:
+            continue
+        found = set(combined.findall(content))
+        for name in found & names:
+            name_to_files.setdefault(name, set()).add(filepath)
+    return name_to_files
+
+
+def grep_files_containing(
+    names: set[str], file_list: list[str], *, word_boundary: bool = True
+) -> dict[str, set[str]]:
+    r"""Find which files contain which names. Returns {name: set(filepaths)}."""
+    if not names:
+        return {}
+    names_by_length = sorted(names, key=len, reverse=True)
+    if word_boundary:
+        combined = re.compile(
+            r"\b(?:" + "|".join(re.escape(n) for n in names_by_length) + r")\b"
+        )
+    else:
+        combined = re.compile("|".join(re.escape(n) for n in names_by_length))
+
+    result = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_files_containing_worker,
+        mode="dict_merge",
+        min_files=50,
+        task_name="grep containing search",
+        combined=combined,
+        names=names,
+    )
+    
+    return result
+
+
+def _grep_count_files_worker(
+    files: list[str], pat: re.Pattern
+) -> list[str]:
+    """Worker function to find files containing a pattern."""
+    matching: list[str] = []
+    for filepath in files:
+        abs_path = filepath if os.path.isabs(filepath) else str(PROJECT_ROOT / filepath)
+        content = read_file_text(abs_path)
+        if content is None:
+            continue
+        if pat.search(content):
+            matching.append(filepath)
+    return matching
+
+
+def grep_count_files(
+    name: str, file_list: list[str], *, word_boundary: bool = True
+) -> list[str]:
+    """Return list of files containing name."""
+    if word_boundary:
+        pat = re.compile(r"\b" + re.escape(name) + r"\b")
+    else:
+        pat = re.compile(re.escape(name))
+    
+    matching = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_count_files_worker,
+        mode="extend",
+        min_files=50,
+        task_name="grep count search",
+        pat=pat,
+    )
+    
+    return matching

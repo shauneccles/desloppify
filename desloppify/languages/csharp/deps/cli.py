@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 
 from desloppify.base.discovery.file_paths import rel
@@ -17,7 +17,7 @@ def render_deps_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
     if getattr(args, "file", None):
         coupling = get_coupling_score(args.file, graph)
         if getattr(args, "json", False):
-            print(json.dumps({"file": rel(args.file), **coupling}, indent=2))
+            print(orjson.dumps({"file": rel(args.file), **coupling}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
         print(colorize(f"\nDependency info: {rel(args.file)}\n", "bold"))
         print(f"  Fan-in (importers):  {coupling['fan_in']}")
@@ -29,7 +29,7 @@ def render_deps_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
     if getattr(args, "json", False):
         top = by_importers[: getattr(args, "top", 20)]
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "files": len(graph),
                     "entries": [
@@ -41,8 +41,8 @@ def render_deps_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
                         for filepath, entry in top
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 
@@ -61,7 +61,7 @@ def render_cycles_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
 
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(cycles),
                     "cycles": [
@@ -69,8 +69,8 @@ def render_cycles_cli(args, *, build_dep_graph, resolve_roslyn_cmd) -> None:
                         for cycle in cycles
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

@@ -104,12 +104,12 @@ def _detect_marker_exists(project_root: Path, marker: str) -> bool:
         return False
 
     # Fast path for literal markers.
-    if (project_root / marker_text).exists():
+    if (project_root / marker_text).is_file():
         return True
 
     # Wildcard markers (for example "*.fsproj") are matched at project root.
     if any(ch in marker_text for ch in _MARKER_GLOB_CHARS):
-        return any(project_root.glob(marker_text))
+        return any(path.is_file() for path in project_root.glob(marker_text))
     return False
 
 

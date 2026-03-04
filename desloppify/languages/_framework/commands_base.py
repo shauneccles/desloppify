@@ -7,7 +7,7 @@ Language-specific commands with unique display logic stay in their own modules.
 
 from __future__ import annotations
 
-import json
+import orjson
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -200,13 +200,13 @@ def make_cmd_facade(
         entries, _ = detect_facades_fn(graph)
         if getattr(args, "json", False):
             print(
-                json.dumps(
+                orjson.dumps(
                     {
                         "count": len(entries),
                         "entries": [{**e, "file": rel(e["file"])} for e in entries],
                     },
-                    indent=2,
-                )
+                    option=orjson.OPT_INDENT_2,
+                ).decode("utf-8")
             )
             return
         if not entries:
@@ -248,7 +248,7 @@ def make_cmd_smells(
     def cmd_smells(args: argparse.Namespace) -> None:
         entries, _ = detect_smells_fn(Path(args.path))
         if getattr(args, "json", False):
-            print(json.dumps({"entries": entries}, indent=2))
+            print(orjson.dumps({"entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
         if not entries:
             print(colorize("No code smells detected.", "green"))
@@ -361,7 +361,7 @@ def make_cmd_deps(
         rows.sort(key=lambda row: (-row["import_count"], row["file"]))
 
         if getattr(args, "json", False):
-            print(json.dumps({"count": len(rows), "entries": rows}, indent=2))
+            print(orjson.dumps({"count": len(rows), "entries": rows}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
 
         if not rows:
@@ -396,7 +396,7 @@ def make_cmd_cycles(*, build_dep_graph_fn) -> Callable[[argparse.Namespace], Non
         entries, _ = detect_cycles(graph)
 
         if getattr(args, "json", False):
-            print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+            print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
 
         if not entries:
@@ -437,7 +437,7 @@ def make_cmd_orphaned(
 
         if getattr(args, "json", False):
             print(
-                json.dumps(
+                orjson.dumps(
                     {
                         "count": len(entries),
                         "entries": [
@@ -445,8 +445,8 @@ def make_cmd_orphaned(
                             for entry in entries
                         ],
                     },
-                    indent=2,
-                )
+                    option=orjson.OPT_INDENT_2,
+                ).decode("utf-8")
             )
             return
 
@@ -474,7 +474,7 @@ def make_cmd_dupes(*, extract_functions_fn) -> Callable[[argparse.Namespace], No
         )
 
         if getattr(args, "json", False):
-            print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+            print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
 
         if not entries:

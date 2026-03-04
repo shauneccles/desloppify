@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -85,7 +85,7 @@ def test_cmd_deps_single_file_json_output(capsys, monkeypatch):
     )
 
     out = capsys.readouterr().out
-    payload = json.loads(out)
+    payload = orjson.loads(out)
     assert payload["file"] == "Program.cs"
     assert payload["fan_in"] == 0
     assert payload["fan_out"] == 5
@@ -142,7 +142,7 @@ def test_cmd_deps_overview_json_output(capsys, monkeypatch):
     )
 
     out = capsys.readouterr().out
-    payload = json.loads(out)
+    payload = orjson.loads(out)
     assert payload["files"] == 2
     assert len(payload["entries"]) == 2
     # First entry should be A.cs (highest importer_count)
@@ -169,7 +169,7 @@ def test_cmd_deps_overview_respects_top_limit(capsys, monkeypatch):
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
     )
 
-    payload = json.loads(capsys.readouterr().out)
+    payload = orjson.loads(capsys.readouterr().out)
     assert len(payload["entries"]) == 3
 
 
@@ -266,7 +266,7 @@ def test_cmd_cycles_json_output(capsys, monkeypatch):
         resolve_roslyn_cmd=_stub_roslyn_resolver(),
     )
 
-    payload = json.loads(capsys.readouterr().out)
+    payload = orjson.loads(capsys.readouterr().out)
     assert payload["count"] == 2
     assert len(payload["cycles"]) == 2
     assert payload["cycles"][0]["length"] == 2

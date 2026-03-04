@@ -72,7 +72,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 _status_json_payload(
                     state,
                     stats,
@@ -81,8 +81,8 @@ def cmd_status(args: argparse.Namespace) -> None:
                     subjective_measures,
                     suppression,
                 ),
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

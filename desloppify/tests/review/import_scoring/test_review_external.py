@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,9 +31,9 @@ def test_external_start_creates_session_and_template(tmp_path, monkeypatch):
     packet_path = tmp_path / "packets" / "packet.json"
     blind_path = tmp_path / "packets" / "review_packet_blind.json"
     packet_path.parent.mkdir(parents=True, exist_ok=True)
-    packet_path.write_text(json.dumps({"ok": True}))
+    packet_path.write_text(orjson.dumps({"ok": True}).decode("utf-8"))
     blind_payload = {"command": "review", "dimensions": ["naming_quality"]}
-    blind_path.write_text(json.dumps(blind_payload))
+    blind_path.write_text(orjson.dumps(blind_payload).decode("utf-8"))
 
     monkeypatch.setattr(
         external_mod,
@@ -55,13 +55,13 @@ def test_external_start_creates_session_and_template(tmp_path, monkeypatch):
 
     session_files = list((tmp_path / "sessions").glob("*/session.json"))
     assert len(session_files) == 1
-    session = json.loads(session_files[0].read_text())
+    session = orjson.loads(session_files[0].read_text())
     assert session["runner"] == "claude"
     assert session["status"] == "open"
     assert session["packet_sha256"] == hashlib.sha256(blind_path.read_bytes()).hexdigest()
     template = Path(session["template_path"])
     assert template.exists()
-    template_payload = json.loads(template.read_text())
+    template_payload = orjson.loads(template.read_text())
     assert "session" in template_payload
     assert template_payload["session"]["id"] == session["session_id"]
     assert template_payload["session"]["token"] == session["token"]
@@ -77,7 +77,7 @@ def test_external_submit_rejects_missing_session_metadata(tmp_path, monkeypatch)
     session_dir = tmp_path / "sessions" / "ext_x"
     session_dir.mkdir(parents=True, exist_ok=True)
     blind = tmp_path / "blind.json"
-    blind.write_text(json.dumps({"command": "review"}))
+    blind.write_text(orjson.dumps({"command": "review"}).decode("utf-8"))
     session_payload = {
         "session_id": "ext_x",
         "status": "open",
@@ -114,7 +114,7 @@ def test_external_submit_canonicalizes_and_imports(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions" / "ext_x"
     session_dir.mkdir(parents=True, exist_ok=True)
     blind = tmp_path / "blind.json"
-    blind.write_text(json.dumps({"command": "review"}))
+    blind.write_text(orjson.dumps({"command": "review"}).decode("utf-8"))
     session_payload = {
         "session_id": "ext_x",
         "status": "open",
@@ -137,7 +137,7 @@ def test_external_submit_canonicalizes_and_imports(tmp_path, monkeypatch):
                 "assessments": {"naming_quality": 100},
                 "issues": [],
             }
-        )
+        ).decode("utf-8")
     )
 
     captured: dict[str, object] = {}
@@ -162,7 +162,7 @@ def test_external_submit_canonicalizes_and_imports(tmp_path, monkeypatch):
     )
 
     assert "import_path" in captured
-    payload = json.loads(Path(str(captured["import_path"])).read_text())
+    payload = orjson.loads(Path(str(captured["import_path"])).read_text())
     assert "session" not in payload
     assert payload["provenance"]["runner"] == "claude"
     assert payload["provenance"]["packet_sha256"] == session_payload["packet_sha256"]
@@ -170,7 +170,7 @@ def test_external_submit_canonicalizes_and_imports(tmp_path, monkeypatch):
     assert kwargs["attested_external"] is True
     assert kwargs["manual_attest"] == external_mod.EXTERNAL_ATTEST_TEXT
 
-    persisted = json.loads(session_path.read_text())
+    persisted = orjson.loads(session_path.read_text())
     assert persisted["status"] == "submitted"
     assert "submitted_at" in persisted
 
@@ -179,7 +179,7 @@ def test_external_submit_dry_run_uses_validate_import(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions" / "ext_x"
     session_dir.mkdir(parents=True, exist_ok=True)
     blind = tmp_path / "blind.json"
-    blind.write_text(json.dumps({"command": "review"}))
+    blind.write_text(orjson.dumps({"command": "review"}).decode("utf-8"))
     session_payload = {
         "session_id": "ext_x",
         "status": "open",
@@ -200,7 +200,7 @@ def test_external_submit_dry_run_uses_validate_import(tmp_path, monkeypatch):
                 "assessments": {"naming_quality": 100},
                 "issues": [],
             }
-        )
+        ).decode("utf-8")
     )
 
     calls: dict[str, int] = {"validate": 0, "import": 0}

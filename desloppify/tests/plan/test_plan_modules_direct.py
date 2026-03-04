@@ -61,6 +61,56 @@ def test_select_phases_and_run_phases_behavior():
     assert potentials == {"fast": 1, "slow": 2, "review": 3}
 
 
+def test_build_phase_groups_respects_dependency_barriers():
+    phase_a = _Phase("Logs", False, [], {})
+    phase_b = _Phase("Unused (ruff)", False, [], {})
+    structural = _Phase("Structural analysis", False, [], {})
+    phase_c = _Phase("Code smells", False, [], {})
+    test_cov = _Phase("Test coverage", False, [], {})
+    phase_d = _Phase("Mutable state", False, [], {})
+
+    groups = plan_scan_mod._build_phase_groups(
+        [phase_a, phase_b, structural, phase_c, test_cov, phase_d]
+    )
+
+    labels = [[phase.label for phase in group] for group in groups]
+    assert labels == [
+        ["Logs", "Unused (ruff)"],
+        ["Structural analysis"],
+        ["Code smells"],
+        ["Test coverage"],
+        ["Mutable state"],
+    ]
+
+
+def test_build_phase_groups_dep_graph_barrier_for_private_imports():
+    logs = _Phase("Logs", False, [], {})
+    coupling = _Phase("Coupling + cycles + orphaned", False, [], {})
+    private_imports = _Phase("Private imports", False, [], {})
+    smells = _Phase("Code smells", False, [], {})
+
+    groups = plan_scan_mod._build_phase_groups(
+        [logs, coupling, private_imports, smells]
+    )
+
+    labels = [[phase.label for phase in group] for group in groups]
+    assert labels == [
+        ["Logs"],
+        ["Coupling + cycles + orphaned"],
+        ["Private imports", "Code smells"],
+    ]
+
+
+def test_build_phase_groups_serializes_when_producer_missing():
+    test_cov = _Phase("Test coverage", False, [], {})
+    smells = _Phase("Code smells", False, [], {})
+
+    groups = plan_scan_mod._build_phase_groups([test_cov, smells])
+    labels = [[phase.label for phase in group] for group in groups]
+
+    assert labels == [["Test coverage"], ["Code smells"]]
+
+
 def test_resolve_lang_prefers_explicit_and_fallbacks(monkeypatch):
     explicit = object()
     assert plan_scan_mod._resolve_lang(explicit, Path(".")) is explicit

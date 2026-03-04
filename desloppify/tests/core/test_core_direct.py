@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 
 import desloppify.base.output.fallbacks as fallbacks_mod
@@ -21,7 +21,7 @@ def test_write_query_injects_config_payload(tmp_path, monkeypatch):
 
     result = query_mod.write_query(payload, query_file=query_path)
 
-    saved = json.loads(query_path.read_text())
+    saved = orjson.loads(query_path.read_text())
     assert saved["command"] == "status"
     assert saved["config"]["target_strict_score"] == 97
     assert result.ok is True
@@ -38,7 +38,7 @@ def test_write_query_records_config_error(tmp_path, monkeypatch):
 
     result = query_mod.write_query(payload, query_file=query_path)
 
-    saved = json.loads(query_path.read_text())
+    saved = orjson.loads(query_path.read_text())
     assert saved["command"] == "scan"
     assert "config_error" in saved
     assert "invalid config" in saved["config_error"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -166,7 +166,7 @@ def write_output_file(
 ) -> bool:
     """Persist payload to file and print success/failure hints."""
     try:
-        safe_write_text_fn(output_file, json.dumps(payload, indent=2) + "\n")
+        safe_write_text_fn(output_file, orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n")
         print(colorize_fn(f"Wrote {item_count} items to {output_file}", "green"))
     except OSError as exc:
         payload["output_error"] = str(exc)
@@ -182,7 +182,7 @@ def emit_non_terminal_output(
 ) -> bool:
     """Render JSON/markdown output variants."""
     renderers = {
-        "json": lambda: print(json.dumps(payload, indent=2)),
+        "json": lambda: print(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8")),
         "md": lambda: print(render_markdown(items)),
     }
     renderer = renderers.get(output_format)

@@ -7,9 +7,11 @@ which production files have been reviewed, are stale, or have changed since revi
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypeAlias
 
 from desloppify.base.discovery.file_paths import (
 
@@ -28,6 +30,15 @@ _LOW_VALUE_NAMES = re.compile(
 # Keep this expression distinct from other modules to avoid duplicate-constant
 # drift while preserving the shared review threshold value.
 MIN_REVIEW_LOC = 10 * 2
+_REVIEW_COVERAGE_PARALLEL_MIN_FILES = 600
+ReviewCandidate: TypeAlias = tuple[str, str, int]
+
+
+def _should_parallelize_review_coverage(candidate_count: int) -> bool:
+    env = os.getenv("DESLOPPIFY_REVIEW_COVERAGE_PARALLEL")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return candidate_count >= _REVIEW_COVERAGE_PARALLEL_MIN_FILES
 
 
 def _hash_file(filepath: str) -> str:
@@ -139,7 +150,7 @@ def detect_review_coverage(
     """Detect production files missing reviews or carrying stale reviews."""
     now = datetime.now(UTC)
     entries: list[dict] = []
-    candidates: list[tuple[str, str, int]] = []
+    candidates: list[ReviewCandidate] = []
     for filepath in files:
         rpath = rel(filepath)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -873,7 +873,7 @@ class TestWriteQuery:
         write_query(data)
 
         assert query_file.exists()
-        loaded = json.loads(query_file.read_text())
+        loaded = orjson.loads(query_file.read_text())
         assert loaded["results"] == [1, 2, 3]
         assert loaded["count"] == 3
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
@@ -136,14 +136,52 @@ def extract_json_payload(raw: str, *, log_fn) -> dict[str, object] | None:
     if not text:
         return None
 
-    decoder = json.JSONDecoder()
-    last_decode_error: json.JSONDecodeError | None = None
+    def _extract_json_segment(source: str, start_idx: int) -> str | None:
+        opening = source[start_idx]
+        closing = "}" if opening == "{" else "]"
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for idx in range(start_idx, len(source)):
+            ch = source[idx]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+
+            if ch == opening:
+                depth += 1
+                continue
+
+            if ch == closing:
+                depth -= 1
+                if depth == 0:
+                    return source[start_idx : idx + 1]
+
+        return None
+
+    last_decode_error: orjson.JSONDecodeError | None = None
     for start, ch in enumerate(text):
         if ch not in "{[":
             continue
+        segment = _extract_json_segment(text, start)
+        if not segment:
+            continue
         try:
-            obj, _ = decoder.raw_decode(text[start:])
-        except json.JSONDecodeError as exc:
+            obj = orjson.loads(segment)
+        except orjson.JSONDecodeError as exc:
             last_decode_error = exc
             continue
         if (

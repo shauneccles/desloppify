@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import re
 from pathlib import Path
@@ -16,6 +16,78 @@ from desloppify.base.output.terminal import colorize, print_table
 from desloppify.base.discovery.paths import get_project_root
 
 logger = logging.getLogger(__name__)
+
+
+# ── Parallel Processing Support ─────────────────────────────────────────────
+
+
+def _process_concern_file(filepath: str) -> dict[str, Any] | None:
+    """Process a single TSX file for mixed concerns detection."""
+    try:
+        p = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else PROJECT_ROOT / filepath
+        )
+        content = p.read_text()
+        loc = len(content.splitlines())
+        if loc < 100:
+            return None
+
+        concerns = []
+
+        # UI rendering
+        has_jsx = bool(re.search(r"return\s*\(?\s*<", content))
+        if has_jsx:
+            concerns.append("jsx_rendering")
+
+        # Data fetching
+        has_fetch = bool(
+            re.search(r"useQuery|useMutation|supabase\.|fetch\(|axios", content)
+        )
+        if has_fetch:
+            concerns.append("data_fetching")
+
+        # Direct supabase calls (should be in hooks/services)
+        has_supabase = bool(re.search(r"supabase\.\w+\.\w+\.\w+", content))
+        if has_supabase:
+            concerns.append("direct_supabase")
+
+        # Heavy data transformation
+        transform_patterns = len(
+            re.findall(r"\.(map|filter|reduce|sort|flatMap)\s*\(", content)
+        )
+        if transform_patterns >= 3:
+            concerns.append(f"data_transforms({transform_patterns})")
+
+        # Event handler definitions (>5 = probably doing too much)
+        handler_count = len(re.findall(r"(?:const|function)\s+handle\w+", content))
+        if handler_count >= 5:
+            concerns.append(f"handlers({handler_count})")
+
+        # Flag if 3+ concern types in one file
+        if len(concerns) >= 3:
+            return {
+                "file": filepath,
+                "loc": loc,
+                "concerns": concerns,
+                "concern_count": len(concerns),
+            }
+    except (OSError, UnicodeDecodeError) as exc:
+        log_best_effort_failure(
+            logger, f"read TSX concern candidate {filepath}", exc
+        )
+    return None
+
+
+def _concerns_batch_worker(filepaths: list[str]) -> list[dict[str, Any]]:
+    """Worker function to process a batch of TSX files for mixed concerns."""
+    results = []
+    for filepath in filepaths:
+        result = _process_concern_file(filepath)
+        if result is not None:
+            results.append(result)
+    return results
 
 
 def detect_mixed_concerns(path: Path) -> tuple[list[dict[str, Any]], int]:
@@ -92,7 +164,7 @@ def detect_mixed_concerns(path: Path) -> tuple[list[dict[str, Any]], int]:
 def cmd_concerns(args: Any) -> None:
     entries, _ = detect_mixed_concerns(Path(args.path))
     if args.json:
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not entries:
         print(colorize("No mixed-concern files found.", "green"))

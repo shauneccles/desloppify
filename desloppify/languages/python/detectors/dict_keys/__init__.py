@@ -114,6 +114,53 @@ def _get_str_key(node: ast.expr) -> str | None:
 # ── Pass 1: Single-scope dict key analysis ────────────────
 
 
+def _process_dict_key_file(filepath: str, dict_key_visitor) -> tuple[list[dict], list[dict]]:
+    """Process a single file for dict key flow analysis.
+    
+    Returns:
+        Tuple of (findings, dict_literals)
+    """
+    try:
+        p = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else PROJECT_ROOT / filepath
+        )
+        source = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable python file %s in dict-key pass: %s", filepath, exc
+        )
+        return [], []
+
+    try:
+        tree = ast.parse(source, filename=filepath)
+    except SyntaxError as exc:
+        logger.debug(
+            "Skipping unparseable python file %s in dict-key pass: %s",
+            filepath,
+            exc,
+        )
+        return [], []
+
+    visitor = dict_key_visitor(filepath)
+    visitor.visit(tree)
+    return visitor._findings, visitor._dict_literals
+
+
+def _dict_key_flow_batch_worker(files: list[str], dict_key_visitor) -> tuple[list[dict], list[dict]]:
+    """Worker function for dict key flow analysis."""
+    batch_findings: list[dict] = []
+    batch_literals: list[dict] = []
+    
+    for filepath in files:
+        findings, literals = _process_dict_key_file(filepath, dict_key_visitor)
+        batch_findings.extend(findings)
+        batch_literals.extend(literals)
+    
+    return batch_findings, batch_literals
+
+
 def detect_dict_key_flow(path: Path) -> tuple[list[dict], int]:
     """Walk all .py files, run DictKeyVisitor. Returns (entries, files_checked)."""
     dict_key_visitor = _load_dict_key_visitor()
@@ -202,24 +249,63 @@ def _extract_literal_keyset(node: ast.Dict) -> frozenset[str] | None:
     return frozenset(literal_keys)
 
 
-def _collect_schema_literals(path: Path, files: list[str]) -> list[dict]:
+def _process_schema_file(filepath: str, path: Path) -> list[dict]:
+    """Process a single file for schema literal extraction."""
     literals: list[dict] = []
-    for filepath in files:
-        source = _read_python_file(filepath, path=path)
-        if source is None:
-            continue
-        tree = _parse_python_ast(source, filepath=filepath)
-        if tree is None:
-            continue
+    
+    source = _read_python_file(filepath, path=path)
+    if source is None:
+        return literals
+    tree = _parse_python_ast(source, filepath=filepath)
+    if tree is None:
+        return literals
 
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Dict):
-                continue
-            keyset = _extract_literal_keyset(node)
-            if keyset is None:
-                continue
-            literals.append({"file": filepath, "line": node.lineno, "keys": keyset})
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keyset = _extract_literal_keyset(node)
+        if keyset is None:
+            continue
+        literals.append({"file": filepath, "line": node.lineno, "keys": keyset})
     return literals
+
+
+def _schema_literals_batch_worker(files: list[str], path: Path) -> list[dict]:
+    """Worker function for schema literal collection."""
+    batch_literals: list[dict] = []
+    
+    for filepath in files:
+        literals = _process_schema_file(filepath, path)
+        batch_literals.extend(literals)
+    
+    return batch_literals
+
+
+def _collect_schema_literals(path: Path, files: list[str]) -> list[dict]:
+    # Process files in parallel
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_schema_literals_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="schema literal collection",
+        path=path,
+    )
+    
+    # Aggregate results
+    if isinstance(batch_results, list) and batch_results:
+        # Check if it's a flat list of dicts (sequential) or nested (parallel)
+        if isinstance(batch_results[0], dict):
+            # Sequential mode - direct list
+            return batch_results
+        else:
+            # Parallel mode - flatten nested lists
+            all_literals: list[dict] = []
+            for batch in batch_results:
+                if isinstance(batch, list):
+                    all_literals.extend(batch)
+            return all_literals
+    return batch_results if isinstance(batch_results, list) else []
 
 
 def _cluster_by_jaccard(

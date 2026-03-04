@@ -1,6 +1,6 @@
 """Tests for desloppify.languages.typescript.detectors.deps — dependency graph and import analysis."""
 
-import json
+import orjson
 from pathlib import Path
 
 import pytest
@@ -18,9 +18,11 @@ def _root(tmp_path, set_project_root, monkeypatch):
     deps_resolve_mod.load_tsconfig_paths_cached.cache_clear()
 
 
-def _write(tmp_path: Path, name: str, content: str) -> Path:
+def _write(tmp_path: Path, name: str, content: str | bytes) -> Path:
     p = tmp_path / name
     p.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
     p.write_text(content)
     return p
 
@@ -285,7 +287,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
         )
         paths = deps_detector_mod._load_tsconfig_paths(tmp_path)
         assert paths == {"@/": "src/"}
@@ -295,7 +297,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps(
+            orjson.dumps(
                 {
                     "compilerOptions": {
                         "paths": {
@@ -317,7 +319,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps(
+            orjson.dumps(
                 {
                     "compilerOptions": {
                         "baseUrl": "src",
@@ -334,14 +336,14 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.base.json",
-            json.dumps(
+            orjson.dumps(
                 {"compilerOptions": {"paths": {"@shared/*": ["./packages/shared/*"]}}}
             ),
         )
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"extends": "./tsconfig.base.json", "compilerOptions": {}}),
+            orjson.dumps({"extends": "./tsconfig.base.json", "compilerOptions": {}}),
         )
         paths = deps_detector_mod._load_tsconfig_paths(tmp_path)
         assert paths["@shared/"] == "packages/shared/"
@@ -360,7 +362,7 @@ class TestTsconfigPaths:
     def test_tsconfig_no_paths_field(self, tmp_path):
         """tsconfig exists but has no paths field → fallback."""
         _write(
-            tmp_path, "tsconfig.json", json.dumps({"compilerOptions": {"strict": True}})
+            tmp_path, "tsconfig.json", orjson.dumps({"compilerOptions": {"strict": True}})
         )
         paths = deps_detector_mod._load_tsconfig_paths(tmp_path)
         assert paths == {"@/": "src/"}
@@ -370,7 +372,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}),
         )
         assert deps_detector_mod.ts_alias_resolver("@lib/utils") == "lib/utils"
         # Non-matching paths pass through
@@ -382,7 +384,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}),
         )
         _write(tmp_path, "lib/helpers.ts", "export const help = 1;\n")
         _write(tmp_path, "app.ts", "import { help } from '@lib/helpers';\n")
@@ -398,7 +400,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
         )
         result1 = deps_detector_mod._load_tsconfig_paths(tmp_path)
         result2 = deps_detector_mod._load_tsconfig_paths(tmp_path)
@@ -409,7 +411,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*", "./lib/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*", "./lib/*"]}}}),
         )
         paths = deps_detector_mod._load_tsconfig_paths(tmp_path)
         assert paths["@/"] == "src/"
@@ -419,7 +421,7 @@ class TestTsconfigPaths:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps(
+            orjson.dumps(
                 {"extends": "@tsconfig/node20/tsconfig.json", "compilerOptions": {}}
             ),
         )
@@ -518,7 +520,7 @@ class TestFrameworkFiles:
         _write(
             tmp_path,
             "tsconfig.json",
-            json.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
+            orjson.dumps({"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}),
         )
         _write(tmp_path, "src/store.ts", "export const count = 0;\n")
         _write(

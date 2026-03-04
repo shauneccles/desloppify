@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 
 import desloppify.engine._state.filtering as filtering_mod
 import desloppify.engine._state.noise as noise_mod
@@ -66,7 +66,7 @@ def test_load_state_missing_and_backup_fallback(tmp_path):
     primary = tmp_path / "state.json"
     backup = tmp_path / "state.json.bak"
     primary.write_text("{not-json")
-    backup.write_text(json.dumps(schema_mod.empty_state()))
+    backup.write_text(orjson.dumps(schema_mod.empty_state()).decode("utf-8"))
 
     recovered = persistence_mod.load_state(primary)
     assert recovered["version"] == schema_mod.CURRENT_VERSION

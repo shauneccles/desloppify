@@ -1,6 +1,6 @@
 """Tests for desloppify.state — issue lifecycle, persistence, and merge logic."""
 
-import json
+import orjson
 from pathlib import Path
 
 import pytest
@@ -277,7 +277,7 @@ class TestLoadState:
     def test_valid_json_returns_parsed_data(self, tmp_path):
         p = tmp_path / "state.json"
         data = {"version": 1, "hello": "world"}
-        p.write_text(json.dumps(data))
+        p.write_text(orjson.dumps(data).decode("utf-8"))
         s = load_state(p)
         assert s["hello"] == "world"
         validate_state_invariants(s)
@@ -299,7 +299,7 @@ class TestLoadState:
         p.write_text("{bad json!!")
         backup = tmp_path / "state.json.bak"
         backup_data = {"version": 1, "source": "backup"}
-        backup.write_text(json.dumps(backup_data))
+        backup.write_text(orjson.dumps(backup_data).decode("utf-8"))
 
         s = load_state(p)
         assert s["source"] == "backup"
@@ -339,7 +339,7 @@ class TestSaveState:
         st = empty_state()
         save_state(st, p)
         assert p.exists()
-        loaded = json.loads(p.read_text())
+        loaded = orjson.loads(p.read_text())
         assert loaded["version"] == 1
 
     def test_creates_backup_of_previous(self, tmp_path):
@@ -355,10 +355,10 @@ class TestSaveState:
 
         backup = tmp_path / "state.json.bak"
         assert backup.exists()
-        backup_data = json.loads(backup.read_text())
+        backup_data = orjson.loads(backup.read_text())
         # Backup should be the *previous* save (before scan_count=42 was added
         # but after _recompute_stats ran on the first save).
-        original_data = json.loads(original_content)
+        original_data = orjson.loads(original_content)
         assert backup_data["version"] == original_data["version"]
 
     def test_atomic_write_produces_valid_json(self, tmp_path):
@@ -369,7 +369,7 @@ class TestSaveState:
         st["custom_set"] = {3, 1, 2}
         st["custom_path"] = Path("/tmp/hello")
         save_state(st, p)
-        loaded = json.loads(p.read_text())
+        loaded = orjson.loads(p.read_text())
         assert loaded["custom_set"] == [1, 2, 3]  # sorted
         assert loaded["custom_path"] == "/tmp/hello"
 

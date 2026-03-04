@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import json
+import orjson
 from collections.abc import Callable
 from pathlib import Path
 
@@ -99,15 +99,15 @@ def cmd_orphaned(args: argparse.Namespace) -> None:
     )
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(entries),
                     "entries": [
                         {"file": rel(e["file"]), "loc": e["loc"]} for e in entries
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
     if not entries:
@@ -135,7 +135,7 @@ def cmd_dupes(args: argparse.Namespace) -> None:
         functions, threshold=getattr(args, "threshold", None) or 0.8
     )
     if getattr(args, "json", False):
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not entries:
         print(colorize("No duplicate functions found.", "green"))
@@ -247,7 +247,7 @@ def cmd_coupling(args: argparse.Namespace) -> None:
     )
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "violations": len(violations),
                     "boundary_candidates": len(candidates),
@@ -256,8 +256,8 @@ def cmd_coupling(args: argparse.Namespace) -> None:
                         {**e, "file": rel(e["file"])} for e in candidates
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
     if violations:

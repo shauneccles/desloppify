@@ -110,7 +110,7 @@ def cmd_deps(args: Any) -> None:
         # Single file mode
         coupling = get_coupling_score(args.file, graph)
         if args.json:
-            print(json.dumps({"file": rel(args.file), **coupling}, indent=2))
+            print(orjson.dumps({"file": rel(args.file), **coupling}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
         print(colorize(f"\nDependency info: {rel(args.file)}\n", "bold"))
         print(f"  Fan-in (importers):  {coupling['fan_in']}")
@@ -143,15 +143,15 @@ def cmd_deps(args: Any) -> None:
 
     if args.json:
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(scored),
                     "entries": [
                         {**s, "file": rel(s["file"])} for s in scored[: args.top]
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 
@@ -171,7 +171,7 @@ def cmd_cycles(args: Any) -> None:
 
     if args.json:
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(cycles),
                     "cycles": [
@@ -179,8 +179,8 @@ def cmd_cycles(args: Any) -> None:
                         for cy in cycles
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

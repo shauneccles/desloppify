@@ -12,7 +12,7 @@ than a crash.
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import subprocess
 from pathlib import Path
@@ -47,8 +47,8 @@ def _run_knip(path: Path, timeout: int = 120) -> dict | None:
         return None
 
     try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as exc:
+        return orjson.loads(stdout)
+    except orjson.JSONDecodeError as exc:
         logger.debug("knip: JSON parse error: %s", exc)
         return None
 

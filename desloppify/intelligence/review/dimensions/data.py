@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-import json
+import orjson
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,8 +27,8 @@ def _load_json_payload_from_path(path: Path) -> dict:
         raise RuntimeError(f"Unable to read dimensions payload: {path}") from exc
 
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        payload = orjson.loads(raw)
+    except orjson.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in dimensions payload: {path}") from exc
 
     if not isinstance(payload, dict):

@@ -126,7 +126,7 @@ def test_makefile_contains_ci_gate_targets() -> None:
 
 
 def test_readme_optional_extras_exist_in_pyproject() -> None:
-    readme = README.read_text()
+    readme = README.read_text(encoding="utf-8")
     referenced = set(re.findall(r"desloppify\[([a-zA-Z0-9_-]+)\]", readme))
     optional = _optional_dependencies()
     missing = sorted(extra for extra in referenced if extra not in optional)

@@ -4,7 +4,7 @@ Includes a Deno/edge-functions fallback where `tsc` cannot model URL-based impor
 """
 
 import argparse
-import json
+import orjson
 import logging
 import re
 import subprocess
@@ -106,9 +106,18 @@ def _extract_import_names(line: str) -> list[str]:
     return deduped
 
 
-def _detect_unused_fallback(path: Path, category: str) -> tuple[list[dict], int]:
-    """Conservative source-based fallback for Deno/edge TS projects."""
-    files = find_ts_files(path)
+# ── Parallel Processing Support ─────────────────────────────────────────────
+
+
+def _process_unused_file(filepath: str, category: str) -> list[dict]:
+    """Process a single TS file for unused declarations."""
+    full = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+    raw = read_file_text(str(full))
+    if raw is None:
+        return []
+    
+    code = strip_c_style_comments(raw)
+    lines = raw.splitlines()
     entries: list[dict] = []
 
     for filepath in files:
@@ -158,9 +167,56 @@ def _detect_unused_fallback(path: Path, category: str) -> tuple[list[dict], int]
                             "line": lineno,
                             "col": max(1, line.find(name) + 1),
                             "name": name,
-                            "category": "vars",
+                            "category": "imports",
                         }
                     )
+
+    # Top-level variable/function/class declarations (non-exported only).
+    if category in {"all", "vars"}:
+        for lineno, line in enumerate(lines, 1):
+            if line.lstrip() != line:
+                continue
+            m = _DECL_RE.match(line)
+            if not m:
+                continue
+            exported, name = m.group(1), m.group(2)
+            if exported or name.startswith("_"):
+                continue
+            if _identifier_occurrences(code, name) <= 1:
+                entries.append(
+                    {
+                        "file": filepath,
+                        "line": lineno,
+                        "col": max(1, line.find(name) + 1),
+                        "name": name,
+                        "category": "vars",
+                    }
+                )
+
+    return entries
+
+
+def _unused_batch_worker(files: list[str], category: str) -> list[dict]:
+    """Worker function to process a batch of TS files for unused declarations."""
+    results = []
+    for filepath in files:
+        results.extend(_process_unused_file(filepath, category))
+    return results
+
+
+def _detect_unused_fallback(path: Path, category: str) -> tuple[list[dict], int]:
+    """Conservative source-based fallback for Deno/edge TS projects."""
+    files = find_ts_files(path)
+    
+    # Use parallel processing for CPU-intensive comment stripping and regex checks
+    entries = process_files_parallel(
+        files=files,
+        worker_func=_unused_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="unused detection fallback",
+        category=category,
+    )
 
     return entries, len(files)
 
@@ -219,7 +275,10 @@ def detect_unused(path: Path, category: str = "all") -> tuple[list[dict], int]:
     }
     tmp_path = get_project_root() / "tsconfig.desloppify.json"
     try:
-        safe_write_text(tmp_path, json.dumps(tmp_tsconfig, indent=2))
+        safe_write_text(
+            tmp_path,
+            orjson.dumps(tmp_tsconfig, option=orjson.OPT_INDENT_2).decode("utf-8"),
+        )
         try:
             result = subprocess.run(
                 ["npx", "tsc", "--project", str(tmp_path), "--noEmit"],
@@ -337,7 +396,7 @@ def cmd_unused(args: argparse.Namespace) -> None:
         print(colorize("Running tsc... (this may take a moment)", "dim"), file=sys.stderr)
     entries, _ = detect_unused(Path(args.path), args.category)
     if args.json:
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
 
     if not entries:

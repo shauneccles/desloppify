@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import shutil
 import sys
@@ -33,7 +33,7 @@ from desloppify.engine._state import _recompute_stats
 
 
 def _load_json(path: Path) -> dict[str, object]:
-    data = json.loads(path.read_text())
+    data = orjson.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("state file root must be a JSON object")
     return data
@@ -56,7 +56,7 @@ def load_state(path: Path | None = None) -> StateModel:
 
     try:
         data = _load_json(state_path)
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as ex:
+    except (orjson.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as ex:
         backup = state_path.with_suffix(".json.bak")
         if backup.exists():
             logger.warning(
@@ -78,7 +78,7 @@ def load_state(path: Path | None = None) -> StateModel:
                 )
                 return _normalize_loaded_state(backup_data)
             except (
-                json.JSONDecodeError,
+                orjson.JSONDecodeError,
                 UnicodeDecodeError,
                 OSError,
                 ValueError,
@@ -179,7 +179,7 @@ def save_state(
     state_path = path or STATE_FILE
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    content = json.dumps(state, indent=2, default=json_default) + "\n"
+    content = orjson.dumps(state, option=orjson.OPT_INDENT_2, default=json_default).decode("utf-8") + "\n"
 
     if state_path.exists():
         backup = state_path.with_suffix(".json.bak")

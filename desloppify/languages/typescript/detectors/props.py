@@ -1,7 +1,7 @@
 """Bloated prop interface detection (>14 props = prop drilling signal)."""
 
 import argparse
-import json
+import orjson
 import logging
 import re
 from pathlib import Path
@@ -99,7 +99,7 @@ def detect_prop_interface_bloat(
 def cmd_props(args: argparse.Namespace) -> None:
     entries, _ = detect_prop_interface_bloat(Path(args.path))
     if args.json:
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
     if not entries:
         print(colorize("No bloated prop interfaces found.", "green"))

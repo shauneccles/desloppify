@@ -82,7 +82,7 @@ def _match_pattern(rel_path: str, pattern: str) -> bool:
 
     # Exact basename: has a proper file extension (1-5 chars after last dot),
     # no "/" → exact basename match (config.py, setup.py, conftest.py)
-    if "/" not in pattern and "." in pattern:
+    if "/" not in pattern and "\\" not in pattern and "." in pattern:
         ext = pattern.rsplit(".", 1)[-1]
         if ext and len(ext) <= 5 and ext.isalnum():
             return basename == pattern

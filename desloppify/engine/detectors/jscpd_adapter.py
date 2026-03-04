@@ -10,7 +10,7 @@ Falls back gracefully to None when jscpd/npx is not installed.
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 import logging
 import subprocess
 import tempfile
@@ -230,8 +230,8 @@ def detect_with_jscpd(path: Path) -> list[dict] | None:
             return []
 
         try:
-            report = json.loads(report_file.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
+            report = orjson.loads(report_file.read_text())
+        except (orjson.JSONDecodeError, OSError) as exc:
             logger.debug("jscpd: failed to parse report: %s", exc)
             return None
 

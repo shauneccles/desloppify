@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import secrets
 import shlex
 import subprocess
@@ -354,8 +354,8 @@ def do_external_start(args, state, lang, *, config: dict[str, Any] | None = None
         "instructions_path": str(instructions_path),
         "expected_output_path": str(output_path),
     }
-    safe_write_text(session_path, json.dumps(session_payload, indent=2) + "\n")
-    safe_write_text(template_path, json.dumps(template_payload, indent=2) + "\n")
+    safe_write_text(session_path, orjson.dumps(session_payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n")
+    safe_write_text(template_path, orjson.dumps(template_payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n")
     safe_write_text(
         launch_prompt_path,
         _build_claude_launch_prompt(
@@ -516,7 +516,7 @@ def do_external_submit(
     stamp = run_stamp()
     session_dir = session_path.parent
     canonical_path = session_dir / f"canonical_import_{stamp}.json"
-    safe_write_text(canonical_path, json.dumps(canonical_payload, indent=2) + "\n")
+    safe_write_text(canonical_path, orjson.dumps(canonical_payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n")
 
     if dry_run:
         do_validate_import(
@@ -544,7 +544,7 @@ def do_external_submit(
     session["submitted_at"] = submitted_at
     session["submitted_input_file"] = str(issues_path)
     session["submitted_canonical_file"] = str(canonical_path)
-    safe_write_text(session_path, json.dumps(session, indent=2) + "\n")
+    safe_write_text(session_path, orjson.dumps(session, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n")
 
     if scan_after_import:
         code = run_followup_scan(

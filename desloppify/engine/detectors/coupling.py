@@ -61,7 +61,15 @@ def _matches_prefix(value: str, prefix: str, *, root_norm: str) -> bool:
     """Match value against prefix regardless of abs/rel shape."""
     if value.startswith(prefix):
         return True
-    return _rel_to_root(value, root_norm).startswith(_rel_to_root(prefix, root_norm))
+    value_rel = _rel_to_root(value, root_norm)
+    prefix_rel = _rel_to_root(prefix, root_norm)
+    if value_rel.startswith(prefix_rel):
+        return True
+    if "/" in prefix_rel:
+        suffix_prefix = prefix_rel.split("/", 1)[1]
+        if value_rel.startswith(suffix_prefix):
+            return True
+    return False
 
 
 def _strip_prefix(value: str, prefix: str, *, root_norm: str) -> str:
@@ -72,6 +80,10 @@ def _strip_prefix(value: str, prefix: str, *, root_norm: str) -> str:
     prefix_rel = _rel_to_root(prefix, root_norm)
     if value_rel.startswith(prefix_rel):
         return value_rel[len(prefix_rel) :]
+    if "/" in prefix_rel:
+        suffix_prefix = prefix_rel.split("/", 1)[1]
+        if value_rel.startswith(suffix_prefix):
+            return value_rel[len(suffix_prefix) :]
     return value
 
 

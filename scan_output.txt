@@ -1,0 +1,97 @@
+  Zones: config: 1, production: 362, script: 97, test: 219
+  [1/15] Unused (ruff)...
+         0 instances -> 0 findings
+  [2/15] Structural analysis...
+         1 complexity-only files below threshold (< 35)
+         -> 145 structural findings
+         flat dirs: 7 overloaded directories (files/subdirs/combined)
+         passthrough: 4 findings
+  [3/15] Responsibility cohesion...
+         responsibility cohesion: 62 modules
+  [4/15] Coupling + cycles + orphaned...
+         single-use: 20 found, 19 suppressed (50-200 LOC, 1 co-located)
+         cycles: 2 import cycles
+         orphaned: 2 files with zero importers
+         facades: 16 re-export facade findings
+         -> 21 coupling/structural findings total
+  [5/15] Uncalled functions...
+         uncalled functions: 6 dead private functions
+  [6/15] Test coverage...
+  WARNING: Could not read file for test coverage (loc_count): monitor_parallel.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (loc_count): desloppify/app/commands/scan/scan_reporting_analysis.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (loc_count): desloppify/app/commands/status_parts/render.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (loc_count): desloppify/languages/typescript/detectors/logs.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): test_detect_large.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): test_actual_worker.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): desloppify/tests/detectors/security/test_parallel.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): test_minimal_mp.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): test_kwargs_mp.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): desloppify/tests/detectors/security/test_security.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_import_mapping_parse): test_parallel_diagnostics.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): test_detect_large.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): test_actual_worker.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): desloppify/tests/detectors/security/test_parallel.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): test_minimal_mp.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): test_kwargs_mp.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): desloppify/tests/detectors/security/test_security.py [UnicodeDecodeError]
+  WARNING: Could not read file for test coverage (coverage_quality_analysis): test_parallel_diagnostics.py [UnicodeDecodeError]
+         test coverage: 105 findings (4542 production files)
+  [7/15] Code smells...
+         -> 157 smell findings
+         signature variance: 7 functions with inconsistent signatures
+  [8/15] Mutable state...
+         global mutable config: 3 findings
+  [9/15] Security...
+         security: clean (459 files scanned)
+  [10/15] Private imports...
+         private imports: 15 findings (458 files scanned)
+  [11/15] Layer violations...
+  [12/15] Dict key flow...
+         -> 46 dict key findings
+  [13/15] Subjective review...
+         subjective review: 304 findings (303 reviewable files)
+  [14/15] Boilerplate duplication...
+  [15/15] Duplicates...
+         zones: 3854 functions excluded (non-production)
+         16 clusters, 11 suppressed (<10 LOC)
+
+  Total: 887 findings
+  ÔåÆ query.json updated
+
+Desloppify Scan (python)
+
+  * Coverage preflight: bandit is not installed ÔÇö Python-specific security checks will be skipped.
+    Repercussion: Python-specific security coverage is reduced; clean security output may miss shell injection, unsafe deserialization, and risky SQL/subprocess patterns.
+    Fix: Install Bandit: pip install bandit
+  Scan complete
+  ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  No changes since last scan
+  Scores: overall 36.4/100  objective 90.9/100  strict 36.4/100  verified 90.9/100
+  Strict 36.4 (target: 95.0)
+  * 773 findings hidden (showing 10/detector). Use `desloppify show <detector>` to see all.
+  Scorecard dimensions (matches scorecard.png):
+  File health        ÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûæÔûæ  89.6%  (strict  89.6%)
+  Code quality       ÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûæ  96.0%  (strict  96.0%)
+  Duplication        ÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûê  99.9%  (strict  99.9%)
+  Security           ÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûê  99.8%  (strict  99.8%)
+  Test health        ÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûêÔûæÔûæÔûæÔûæ  70.7%  (strict  70.7%)
+
+  Score recipe:
+    overall = 40% mechanical + 60% subjective
+    Pool averages: mechanical 90.9% ┬À subjective 0.0%
+    Biggest weighted drags:
+      - High elegance: -10.73 pts (score 0.0%, 17.9% of subjective pool)
+      - Mid elegance: -10.73 pts (score 0.0%, 17.9% of subjective pool)
+      - Type safety: -5.85 pts (score 0.0%, 9.8% of subjective pool)
+      - Contracts: -5.85 pts (score 0.0%, 9.8% of subjective pool)
+      - Low elegance: -5.85 pts (score 0.0%, 9.8% of subjective pool)
+
+  Ôƒ│ 3 chronic reopeners ÔÇö run `desloppify show --chronic` to see them.
+  Coverage reduced (security): bandit is not installed ÔÇö Python-specific security checks will be skipped. | bandit is not installed ÔÇö Python-specific security checks were skipped. Repercussion: Python-specific security coverage is reduced; clean security output may miss shell injection, unsafe deserialization, and risky SQL/subprocess patterns. | Python-specific security checks were skipped; this can miss shell injection, unsafe deserialization, and risky SQL/subprocess patterns. Fix: Install Bandit: pip install bandit
+
+  ÔåÆ Score plateaued at 36.4 for 5 scans. Naming quality (0.0%) is where the breakthrough is.
+  Run `desloppify next` for the highest-priority item.
+  Run `desloppify plan` to see the updated living plan.
+  Run `desloppify status` for the full dashboard.
+
+  ÔÜá Could not generate scorecard badge: No module named 'PIL'

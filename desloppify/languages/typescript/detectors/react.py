@@ -1,7 +1,7 @@
 """React anti-pattern detection: useState+useEffect state sync."""
 
 import argparse
-import json
+import orjson
 import logging
 import re
 from pathlib import Path
@@ -444,7 +444,7 @@ def cmd_react(args: argparse.Namespace) -> None:
 
     if args.json:
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(entries),
                     "entries": [
@@ -456,8 +456,8 @@ def cmd_react(args: argparse.Namespace) -> None:
                         for e in entries
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

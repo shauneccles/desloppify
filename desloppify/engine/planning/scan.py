@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import sys
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,7 +86,9 @@ def _select_phases(lang: LangRun, *, include_slow: bool, profile: str) -> list[D
 def _run_phases(path: Path, lang: LangRun, phases: list[DetectorPhase]) -> tuple[list[Issue], dict[str, int]]:
     issues: list[Issue] = []
     all_potentials: dict[str, int] = {}
+    phase_timings: list[tuple[str, float]] = []
 
+    groups = _build_phase_groups(phases)
     total = len(phases)
     for idx, phase in enumerate(phases, start=1):
         _stderr(f"  [{idx}/{total}] {phase.label}...")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,16 +92,16 @@ class TestParseGolangci:
                 }
             ]
         }
-        entries = parse_golangci(json.dumps(data), Path("."))
+        entries = parse_golangci(orjson.dumps(data), Path("."))
         assert len(entries) == 1
         assert entries[0] == {"file": "main.go", "line": 10, "message": "unused variable"}
 
     def test_handles_empty_issues(self):
-        entries = parse_golangci(json.dumps({"Issues": []}), Path("."))
+        entries = parse_golangci(orjson.dumps({"Issues": []}), Path("."))
         assert entries == []
 
     def test_handles_null_issues(self):
-        entries = parse_golangci(json.dumps({"Issues": None}), Path("."))
+        entries = parse_golangci(orjson.dumps({"Issues": None}), Path("."))
         assert entries == []
 
     def test_invalid_json(self):
@@ -117,7 +117,7 @@ class TestParseGolangci:
                 }
             ]
         }
-        assert parse_golangci(json.dumps(data), Path(".")) == []
+        assert parse_golangci(orjson.dumps(data), Path(".")) == []
 
 
 class TestParseJson:
@@ -127,7 +127,7 @@ class TestParseJson:
             {"filename": "b.swift", "line_no": 2, "text": "error"},
             {"path": "c.swift", "row": 3, "reason": "hint"},
         ]
-        entries = parse_json(json.dumps(data), Path("."))
+        entries = parse_json(orjson.dumps(data), Path("."))
         assert len(entries) == 3
         assert entries[0] == {"file": "a.swift", "line": 1, "message": "warning"}
         assert entries[1] == {"file": "b.swift", "line": 2, "message": "error"}
@@ -135,7 +135,7 @@ class TestParseJson:
 
     def test_skips_items_without_file(self):
         data = [{"line": 1, "message": "no file"}]
-        entries = parse_json(json.dumps(data), Path("."))
+        entries = parse_json(orjson.dumps(data), Path("."))
         assert entries == []
 
     def test_invalid_json(self):
@@ -143,11 +143,11 @@ class TestParseJson:
             parse_json("not json", Path("."))
 
     def test_non_array(self):
-        assert parse_json(json.dumps({"key": "value"}), Path(".")) == []
+        assert parse_json(orjson.dumps({"key": "value"}), Path(".")) == []
 
     def test_skips_rows_with_non_numeric_line(self):
         data = [{"file": "a.swift", "line": "NaN", "message": "warning"}]
-        assert parse_json(json.dumps(data), Path(".")) == []
+        assert parse_json(orjson.dumps(data), Path(".")) == []
 
 
 class TestParseRubocop:
@@ -178,7 +178,7 @@ class TestParseRubocop:
                 },
             ]
         }
-        entries = parse_rubocop(json.dumps(data), Path("."))
+        entries = parse_rubocop(orjson.dumps(data), Path("."))
         assert len(entries) == 3
         assert entries[0] == {"file": "app/models/user.rb", "line": 5, "message": "Line too long"}
         assert entries[2] == {
@@ -188,7 +188,7 @@ class TestParseRubocop:
         }
 
     def test_empty_files(self):
-        assert parse_rubocop(json.dumps({"files": []}), Path(".")) == []
+        assert parse_rubocop(orjson.dumps({"files": []}), Path(".")) == []
 
     def test_invalid_json(self):
         with pytest.raises(ToolParserError):
@@ -198,7 +198,7 @@ class TestParseRubocop:
 class TestParseCargo:
     def test_extracts_compiler_messages(self):
         lines = [
-            json.dumps(
+            orjson.dumps(
                 {
                     "reason": "compiler-message",
                     "message": {
@@ -206,8 +206,8 @@ class TestParseCargo:
                         "rendered": "warning: unused variable\n  --> src/main.rs:42:5\n",
                     },
                 }
-            ),
-            json.dumps({"reason": "build-script-executed"}),
+            ).decode("utf-8"),
+            orjson.dumps({"reason": "build-script-executed"}).decode("utf-8"),
         ]
         entries = parse_cargo("\n".join(lines), Path("."))
         assert len(entries) == 1
@@ -216,7 +216,7 @@ class TestParseCargo:
         assert "unused variable" in entries[0]["message"]
 
     def test_skips_non_compiler_messages(self):
-        line = json.dumps({"reason": "build-finished", "success": True})
+        line = orjson.dumps({"reason": "build-finished", "success": True}).decode("utf-8")
         assert parse_cargo(line, Path(".")) == []
 
     def test_empty_output(self):
@@ -228,7 +228,7 @@ class TestParseEslint:
         payload = [
             {"filePath": "src/app.ts", "messages": [{"line": "oops", "message": "x"}]}
         ]
-        assert parse_eslint(json.dumps(payload), Path(".")) == []
+        assert parse_eslint(orjson.dumps(payload), Path(".")) == []
 
     def test_invalid_json(self):
         with pytest.raises(ToolParserError):

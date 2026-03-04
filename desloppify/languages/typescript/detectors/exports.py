@@ -1,7 +1,7 @@
 """Dead exports detection via Knip."""
 
 import argparse
-import json
+import orjson
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -24,7 +24,7 @@ def cmd_exports(args: argparse.Namespace) -> None:
     print(colorize("Scanning exports via Knip...", "dim"), file=sys.stderr)
     entries, _ = detect_dead_exports(Path(args.path))
     if args.json:
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
 
     if not entries:

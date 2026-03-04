@@ -8,11 +8,11 @@ path in a deterministic, self-contained way.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 
+import orjson
 from desloppify.languages.csharp.detectors.deps import build_dep_graph
 
 
@@ -37,7 +37,7 @@ def main() -> int:
             for source, entry in sorted(graph.items())
         ]
     }
-    print(json.dumps(payload))
+    print(orjson.dumps(payload).decode("utf-8"))
     return 0
 
 

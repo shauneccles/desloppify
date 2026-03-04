@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import multiprocessing
 import sys
 from functools import lru_cache
 import argparse
@@ -147,9 +149,12 @@ def _handle_help_command(args, parser) -> None:
 
 
 def main() -> None:
+    # Support for Windows multiprocessing
+    multiprocessing.freeze_support()
+    
     # Ensure Unicode output works on Windows terminals (cp1252 etc.)
     for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
+        if isinstance(stream, io.TextIOWrapper):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except (AttributeError, OSError):
@@ -163,6 +168,15 @@ def main() -> None:
     if not args.command:
         parser.print_help()
         return
+
+    # Configure logging level based on verbose flag
+    if getattr(args, "verbose", False):
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+            force=True,
+        )
     if args.command == "help":
         _handle_help_command(args, parser)
         return

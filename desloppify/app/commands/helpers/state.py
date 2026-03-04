@@ -22,8 +22,10 @@ def _sole_existing_lang_state_file() -> Path | None:
 
 def _allow_lang_state_fallback(args: argparse.Namespace) -> bool:
     """Whether command can safely fallback to the sole existing lang state file."""
-    # Scan should always honor detected/explicit language mapping to avoid cross-lang merges.
-    return getattr(args, "command", None) != "scan"
+    command = getattr(args, "command", None)
+    if command is None:
+        return False
+    return command != "scan"
 
 
 def state_path(args: argparse.Namespace) -> Path | None:

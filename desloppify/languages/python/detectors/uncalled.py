@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+from typing import TypeAlias
 
 from desloppify.base.discovery.file_paths import rel
 
@@ -29,6 +30,10 @@ _ENTRY_PATTERNS = [
     "wsgi.py",
     "asgi.py",
 ]
+
+_UNCALLED_MAP_REDUCE_MIN_FILES = 120
+UncalledCandidate: TypeAlias = tuple[str, str, int, int]
+UncalledMapRecord: TypeAlias = tuple[set[str], list[UncalledCandidate]]
 
 
 def _is_test_file(filepath: str) -> bool:
@@ -65,6 +70,47 @@ def _is_candidate(node: ast.AST) -> bool:
     return True
 
 
+def _should_use_uncalled_map_reduce(file_count: int) -> bool:
+    env = os.getenv("DESLOPPIFY_UNCALLED_PARALLEL")
+    if env is not None:
+        return env.strip().lower() in {"1", "true", "yes", "on"}
+    return file_count >= _UNCALLED_MAP_REDUCE_MIN_FILES
+
+
+def _extract_refs_and_candidates(filepath: str) -> UncalledMapRecord:
+    content = read_file_text(filepath)
+    if content is None:
+        return set(), []
+    try:
+        tree = ast.parse(content, filename=filepath)
+    except SyntaxError:
+        return set(), []
+
+    refs: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            refs.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            refs.add(node.attr)
+        elif isinstance(node, ast.ImportFrom | ast.Import):
+            for alias in node.names or []:
+                refs.add(alias.name)
+
+    candidates: list[UncalledCandidate] = []
+    if not (_is_test_file(filepath) or _is_entry_file(filepath)):
+        for node in ast.iter_child_nodes(tree):
+            if _is_candidate(node):
+                loc = (node.end_lineno or node.lineno) - node.lineno + 1
+                candidates.append((rel(filepath), node.name, node.lineno, loc))
+
+    return refs, candidates
+
+
+def _uncalled_map_worker(files: list[str], **kwargs) -> list[UncalledMapRecord]:
+    _ = kwargs
+    return [_extract_refs_and_candidates(filepath) for filepath in files]
+
+
 def detect_uncalled_functions(
     path: Path,
     graph: dict,
@@ -73,6 +119,22 @@ def detect_uncalled_functions(
     project_files = [f for f in graph if f.endswith(".py")]
     if not project_files:
         return [], 0
+
+    map_records: list[UncalledMapRecord]
+    if _should_use_uncalled_map_reduce(len(project_files)):
+        map_results = process_files_parallel(
+            files=project_files,
+            worker_func=_uncalled_map_worker,
+            mode="extend",
+            min_files=_UNCALLED_MAP_REDUCE_MIN_FILES,
+            task_name="UncalledFunctionsMapReduce",
+        )
+        if isinstance(map_results, list):
+            map_records = map_results
+        else:
+            map_records = [map_results]
+    else:
+        map_records = [_extract_refs_and_candidates(filepath) for filepath in project_files]
 
     refs: set[str] = set()
     # (rel_path, name, lineno, loc) for each candidate

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -57,7 +57,7 @@ def test_cmd_exports_json_output(capsys):
         exports_mod.cmd_exports(_make_args(json_output=True))
 
     out = capsys.readouterr().out
-    parsed = json.loads(out)
+    parsed = orjson.loads(out)
     assert parsed["count"] == 1
     assert len(parsed["entries"]) == 1
     assert parsed["entries"][0]["name"] == "unused1"

@@ -95,7 +95,7 @@ def safe_write_text(filepath: str | Path, content: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=p.parent, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         os.replace(tmp, str(p))
     except OSError:

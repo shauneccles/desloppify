@@ -300,8 +300,8 @@ def _detect_non_ts_asset_smells(path: Path, smell_counts: dict[str, list[dict]])
     scanned_files += 1
     try:
         readme_text = readme_path.read_text()
-        package_payload = json.loads(package_path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        package_payload = orjson.loads(package_path.read_text())
+    except (OSError, UnicodeDecodeError, orjson.JSONDecodeError) as exc:
         log_best_effort_failure(logger, "read package/readme for docs drift smell", exc)
         return scanned_files
 
@@ -327,13 +327,97 @@ def _detect_non_ts_asset_smells(path: Path, smell_counts: dict[str, list[dict]])
     return scanned_files
 
 
+def _process_ts_smell_file(filepath: str, checks: list[dict]) -> dict[str, list[dict]]:
+    """Process a single TypeScript file for smell detection.
+    
+    Returns:
+        Dict mapping smell IDs to list of matches
+    """
+    smell_counts: dict[str, list[dict]] = {s["id"]: [] for s in checks}
+    
+    if "node_modules" in filepath or ".d.ts" in filepath:
+        return smell_counts
+    
+    try:
+        p = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else PROJECT_ROOT / filepath
+        )
+        content = p.read_text()
+        lines = content.splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        log_best_effort_failure(
+            logger, f"read TypeScript smell candidate {filepath}", exc
+        )
+        return smell_counts
+
+    # Build line state for string/comment filtering
+    line_state = _build_ts_line_state(lines)
+
+    # Regex-based smells
+    for check in checks:
+        if check["pattern"] is None:
+            continue
+        for i, line in enumerate(lines):
+            # Skip lines inside block comments or template literals
+            if i in line_state:
+                continue
+            m = re.search(check["pattern"], line)
+            if not m:
+                continue
+            # Check if match is inside a single-line string or comment
+            if _ts_match_is_in_string(line, m.start()):
+                continue
+            # Skip URLs assigned to module-level constants
+            if check["id"] == "hardcoded_url" and re.match(
+                r"^(?:export\s+)?(?:const|let|var)\s+[A-Z_][A-Z0-9_]*\s*=",
+                line.strip(),
+            ):
+                continue
+            smell_counts[check["id"]].append(
+                {
+                    "file": filepath,
+                    "line": i + 1,
+                    "content": line.strip()[:100],
+                }
+            )
+
+    # Multi-line smell helpers (brace-tracked)
+    _detect_async_no_await(filepath, content, lines, smell_counts)
+    _detect_error_no_throw(filepath, lines, smell_counts)
+    _detect_empty_if_chains(filepath, lines, smell_counts)
+    _detect_dead_useeffects(filepath, lines, smell_counts)
+    _detect_swallowed_errors(filepath, content, lines, smell_counts)
+    _detect_monster_functions(filepath, lines, smell_counts)
+    _detect_dead_functions(filepath, lines, smell_counts)
+    _detect_window_globals(filepath, lines, line_state, smell_counts)
+    _detect_catch_return_default(filepath, content, smell_counts)
+    _detect_switch_no_default(filepath, content, smell_counts)
+    _detect_nested_closures(filepath, lines, smell_counts)
+    _detect_high_cyclomatic_complexity(filepath, lines, smell_counts)
+    
+    return smell_counts
+
+
+def _ts_smells_batch_worker(files: list[str], checks: list[dict]) -> dict[str, list[dict]]:
+    """Worker function for TypeScript smell detection."""
+    combined_smell_counts: dict[str, list[dict]] = {s["id"]: [] for s in checks}
+    
+    for filepath in files:
+        file_smell_counts = _process_ts_smell_file(filepath, checks)
+        for smell_id, matches in file_smell_counts.items():
+            combined_smell_counts[smell_id].extend(matches)
+    
+    return combined_smell_counts
+
+
 def detect_smells(path: Path) -> tuple[list[dict], int]:
     """Detect TypeScript/React code smell patterns across the codebase.
 
     Returns (entries, total_files_checked).
     """
     checks = TS_SMELL_CHECKS
-    smell_counts: dict[str, list[dict]] = {s["id"]: [] for s in checks}
     files = find_ts_files(path)
 
     for filepath in files:

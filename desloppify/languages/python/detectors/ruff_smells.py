@@ -25,7 +25,7 @@ Rules (non-overlapping with remaining custom smells in smells.py):
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import subprocess
 from collections import defaultdict
@@ -107,8 +107,8 @@ def detect_with_ruff_smells(path: Path) -> list[dict] | None:
         return []
 
     try:
-        diagnostics: list[dict] = json.loads(stdout)
-    except json.JSONDecodeError as exc:
+        diagnostics: list[dict] = orjson.loads(stdout)
+    except orjson.JSONDecodeError as exc:
         logger.debug("ruff smells: JSON parse error: %s", exc)
         return None
 

@@ -9,11 +9,10 @@ from desloppify.base.discovery.source import read_file_text as _read_file_text
 from desloppify.base.discovery.paths import get_project_root
 
 
-def grep_files(
-    pattern: str, file_list: list[str], *, flags: int = 0
+def _grep_files_worker(
+    files: list[str], compiled: re.Pattern, **kwargs
 ) -> list[tuple[str, int, str]]:
-    """Search files for a regex pattern. Returns (filepath, lineno, line_text)."""
-    compiled = re.compile(pattern, flags)
+    """Worker function to search files for a regex pattern."""
     results: list[tuple[str, int, str]] = []
     for filepath in file_list:
         abs_path = filepath if os.path.isabs(filepath) else str(get_project_root() / filepath)
@@ -24,6 +23,40 @@ def grep_files(
             if compiled.search(line):
                 results.append((filepath, lineno, line))
     return results
+
+
+def grep_files(
+    pattern: str, file_list: list[str], *, flags: int = 0
+) -> list[tuple[str, int, str]]:
+    """Search files for a regex pattern. Returns (filepath, lineno, line_text)."""
+    compiled = re.compile(pattern, flags)
+    
+    results = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_files_worker,
+        mode="extend",
+        min_files=50,
+        task_name="core grep search",
+        compiled=compiled,
+    )
+    
+    return results
+
+
+def _grep_files_containing_worker(
+    files: list[str], combined: re.Pattern, names: set[str], **kwargs
+) -> dict[str, set[str]]:
+    """Worker function to find which files contain which names."""
+    name_to_files: dict[str, set[str]] = {}
+    for filepath in files:
+        abs_path = filepath if os.path.isabs(filepath) else str(_get_project_root() / filepath)
+        content = _read_file_text(abs_path)
+        if content is None:
+            continue
+        found = set(combined.findall(content))
+        for name in found & names:
+            name_to_files.setdefault(name, set()).add(filepath)
+    return name_to_files
 
 
 def grep_files_containing(
@@ -46,10 +79,9 @@ def grep_files_containing(
         content = _read_file_text(abs_path)
         if content is None:
             continue
-        found = set(combined.findall(content))
-        for name in found & names:
-            name_to_files.setdefault(name, set()).add(filepath)
-    return name_to_files
+        if pat.search(content):
+            matching.append(filepath)
+    return matching
 
 
 def grep_count_files(

@@ -7,7 +7,7 @@ Catches:
 """
 
 import argparse
-import json
+import orjson
 import logging
 import os
 import re
@@ -72,7 +72,7 @@ def detect_logs_result(path: Path) -> DetectorResult[dict]:
 def cmd_logs(args: argparse.Namespace) -> None:
     entries, _ = detect_logs(Path(args.path))
     if args.json:
-        print(json.dumps({"count": len(entries), "entries": entries}, indent=2))
+        print(orjson.dumps({"count": len(entries), "entries": entries}, option=orjson.OPT_INDENT_2).decode("utf-8"))
         return
 
     if not entries:

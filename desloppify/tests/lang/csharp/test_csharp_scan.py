@@ -1,6 +1,6 @@
 """Smoke tests for C# scan pipeline."""
 
-import json
+import orjson
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -202,14 +202,14 @@ def test_csharp_scan_uses_roslyn_cmd_override_from_lang_config(monkeypatch):
     path = (Path("desloppify") / "tests" / "fixtures" / "csharp" / "simple_app").resolve()
     program = (path / "Program.cs").resolve()
     greeter = (path / "Services" / "Greeter.cs").resolve()
-    payload = json.dumps(
+    payload = orjson.dumps(
         {
             "files": [
                 {"file": str(program), "imports": [str(greeter)]},
                 {"file": str(greeter), "imports": []},
             ]
         }
-    ).encode("utf-8")
+    )
 
     class _Proc:
         returncode = 0

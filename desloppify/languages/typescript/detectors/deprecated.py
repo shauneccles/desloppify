@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import re
 from pathlib import Path
@@ -178,14 +178,14 @@ def cmd_deprecated(args: Any) -> None:
     entries = result.entries
     if args.json:
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(entries),
                     "entries": entries,
                     "population_size": result.population_size,
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 
