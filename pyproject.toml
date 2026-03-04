@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Testing",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = ["defusedxml>=0.7.0"]
 
 [project.urls]
 Homepage = "https://github.com/peteromallet/desloppify"
@@ -40,7 +40,6 @@ scorecard = ["Pillow>=9.0.0"]
 full = [
   "tree-sitter-language-pack>=0.3",
   "bandit>=1.7.8",
-  "defusedxml>=0.7.0",
   "Pillow>=9.0.0",
 ]
 
