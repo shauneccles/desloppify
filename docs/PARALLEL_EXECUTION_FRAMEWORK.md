@@ -1,409 +1,204 @@
-# Universal Parallel Execution Framework
+# Parallel Execution Framework
 
-## Overview
+## Scope
 
-A truly modular system for parallelizing ANY `for filepath in files` loop across the entire codebase. Single environment variable (`DESLOPPIFY_PARALLEL`) controls all multiprocessing.
+This document describes the current parallel runtime used by desloppify for file-batch style work.
 
-## Key Features
+- Core module: `desloppify/engine/parallel_utils.py`
+- Core entrypoint: `process_files_parallel(...)`
+- Global runtime switch: `DESLOPPIFY_PARALLEL`
 
-- **Universal API**: Works with any file processing loop
-- **Flexible aggregation**: Supports list extend, count, dict merge, sum, max, min
-- **Auto-detection**: Intelligently decides when parallelization is worthwhile
-- **Type-safe**: Generic typing for result aggregation
-- **Composable**: Easy to add custom processing logic
-- **Windows-compatible**: Uses `concurrent.futures.ProcessPoolExecutor`
+It also includes CLI controls that affect parallel execution in user workflows.
 
-## Architecture
+## What the framework provides
 
-### Centralized Module
+- Batch splitting (`batch_items`)
+- Worker count calculation (`calculate_workers`)
+- Parallel/sequential mode selection (`should_parallelize`)
+- Result aggregation (`aggregate_results`)
+- Process execution + retries + fallback (`process_files_parallel`)
+- Optional scan-lifetime executor reuse (`persistent_parallel_pool`)
 
-**Location**: `desloppify/engine/_parallel_utils.py`
+## Process pool management
 
-All parallel execution utilities are now in ONE place:
-- Core API: `process_files_parallel()`
-- Config: `should_parallelize()`, `calculate_workers()`
-- Aggregation: `aggregate_results()`
-- Batching: `batch_items()`
+### Default executor lifecycle
 
-### Backward Compatibility
+`process_files_parallel` creates a `concurrent.futures.ProcessPoolExecutor` per call unless a persistent pool is already active.
 
-**Old location**: `desloppify/engine/detectors/_parallel_utils.py`  
-**Status**: Re-exports from centralized module (no breaking changes)
+- Worker count defaults to `max(1, cpu_count - 1)` and is bounded by file count and min batch size logic.
+- Batches are submitted concurrently, then collected with `as_completed`.
+- On completion, the executor is shut down by context manager exit.
 
-## Usage Guide
+### Persistent pool lifecycle
 
-### Simple Case: List Aggregation
+`persistent_parallel_pool(max_workers=None)` is a context manager backed by a `ContextVar`.
 
-**Before** (Sequential):
+- If no pool exists in context, it creates one and stores it for nested calls.
+- If a pool already exists, nested calls reuse it and do not create a new executor.
+- On scope exit, the pool is reset in context and shut down (`wait=True`).
+- Current status: used as the default wrapper around detector phase execution in `desloppify/engine/planning/scan.py`.
+
+### Broken pool handling
+
+If a `BrokenProcessPool` occurs while using a persistent executor:
+
+- The persistent pool context value is invalidated.
+- A best-effort shutdown is attempted with cancellation.
+- The operation falls back to sequential execution for that call.
+
+## Parallel decision model
+
+Selection precedence inside `process_files_parallel`:
+
+1. `force_parallel=True/False` (explicit caller override)
+2. `DESLOPPIFY_PARALLEL` global env override
+3. Optional legacy env var (if `legacy_env_var` is provided)
+4. Auto-threshold (`file_count >= min_files`, default `50`)
+
+## Defaults and constants
+
+From `desloppify/engine/parallel_utils.py`:
+
+- `DEFAULT_MIN_FILES = 50`
+- `DEFAULT_BATCH_SIZE = 10`
+- `BATCH_TIMEOUT_SECONDS = 180`
+- `MAX_RETRY_ATTEMPTS = 3` (constant available to callers)
+
+Per-call defaults in `process_files_parallel`:
+
+- `mode="extend"`
+- `timeout=180`
+- `max_retries=1` (one attempt, no retries)
+- `fail_on_incomplete=False`
+
+## Retry, timeout, and failure behavior
+
+`process_files_parallel` supports per-batch retry and timeout semantics.
+
+- `max_retries` controls max attempts per batch.
+- A timed-out batch is retried until attempts are exhausted.
+- Exception failures are retried the same way, except pickling/broken-pool errors trigger fallback.
+- If some batches fail permanently:
+  - `fail_on_incomplete=False`: returns partial aggregated results.
+  - `fail_on_incomplete=True`: returns empty aggregate for the selected mode.
+
+### Sequential fallback triggers
+
+The call falls back to sequential execution if parallel submission/execution fails with:
+
+- `TypeError`
+- `AttributeError`
+- `pickle.PicklingError`
+- `concurrent.futures.process.BrokenProcessPool`
+
+This is primarily for Windows spawn/pickling compatibility when a worker function or arguments are not importable/pickleable.
+
+## Aggregation modes
+
+Supported `mode` values:
+
+- `"extend"`: flatten list results
+- `"count"`: numeric sum
+- `"dict_merge"`: key-wise merge with collection-aware behavior
+- `"sum"`: numeric sum
+- `"max"`: max value
+- `"min"`: min value
+
+`dict_merge` semantics:
+
+- set + set => union
+- list + list => order-preserving unique union
+- scalar/other conflicts => later value wins
+
+## CLI and runtime controls
+
+### Global control for scan/detector parallelism
+
+There is no dedicated `scan --parallel` flag today.
+
+Use environment variable control:
+
+- `DESLOPPIFY_PARALLEL=true|1|yes` => force parallel on
+- `DESLOPPIFY_PARALLEL=false|0|no` => force parallel off
+- unset/other => auto threshold behavior
+
+Windows CLI startup also enables `multiprocessing.freeze_support()` in `desloppify/cli.py`.
+
+### `review --run-batches` parallel controls
+
+Review batch orchestration has separate concurrency controls (threaded subagent orchestration, not `process_files_parallel`):
+
+- `--parallel`
+- `--max-parallel-batches` (default `3`)
+- `--batch-timeout-seconds` (parser default `1200`)
+- `--batch-max-retries` (default `1`)
+- `--batch-retry-backoff-seconds` (default `2.0`)
+- `--batch-heartbeat-seconds` (default `15.0`)
+- `--batch-stall-warning-seconds` (default `0`, disabled)
+- `--batch-stall-kill-seconds` (default `120`)
+
+Runtime coercion/normalization is centralized in `desloppify/app/commands/review/runtime/policy.py`.
+
+## Usage examples
+
+### Basic detector pattern
+
 ```python
-entries = []
-for filepath in files:
-    result = process_file(filepath)
-    entries.extend(result)
-```
+from desloppify.engine.parallel_utils import process_files_parallel
 
-**After** (Parallel):
-```python
-from desloppify.engine._parallel_utils import process_files_parallel
+def worker(batch: list[str], *, root: Path) -> list[dict]:
+    out: list[dict] = []
+    for filepath in batch:
+        issue = scan_file(filepath, root=root)
+        if issue:
+            out.append(issue)
+    return out
 
 entries = process_files_parallel(
-    files=files,
-    worker_func=lambda batch: [process_file(f) for f in batch],
-    mode="extend"
-)
-```
-
-### Count Aggregation
-
-**Before**:
-```python
-count = 0
-for filepath in files:
-    count += analyze_file(filepath)
-```
-
-**After**:
-```python
-count = process_files_parallel(
-    files=files,
-    worker_func=lambda batch: sum(analyze_file(f) for f in batch),
-    mode="count"
-)
-```
-
-### Dict Merging
-
-**Before**:
-```python
-result_dict = {}
-for filepath in files:
-    data = extract_data(filepath)
-    result_dict.update(data)
-```
-
-**After**:
-```python
-def worker(batch):
-    batch_dict = {}
-    for f in batch:
-        batch_dict.update(extract_data(f))
-    return batch_dict
-
-result_dict = process_files_parallel(
-    files=files,
-    worker_func=worker,
-    mode="dict_merge"
-)
-```
-
-### Complex Processing with Context
-
-**Before**:
-```python
-entries = []
-for filepath in files:
-    entry = complex_analysis(filepath, zone_map, config)
-    if entry:
-        entries.append(entry)
-```
-
-**After**:
-```python
-def worker(batch, zone_map, config):
-    results = []
-    for f in batch:
-        entry = complex_analysis(f, zone_map, config)
-        if entry:
-            results.append(entry)
-    return results
-
-entries = process_files_parallel(
-    files=files,
+    files=file_list,
     worker_func=worker,
     mode="extend",
-    zone_map=zone_map,
-    config=config
+    task_name="ExampleScan",
+    root=scan_root,
 )
 ```
 
-## Environment Variables
+### Force sequential for debugging
 
-### Global Control (Recommended)
-
-```bash
-# Enable ALL parallel execution
-export DESLOPPIFY_PARALLEL=true
-desloppify scan
-
-# Disable ALL parallel execution
-export DESLOPPIFY_PARALLEL=false
-desloppify scan
-
-# Auto-detect (default) - uses parallel for 50+ files
-desloppify scan
-```
-
-## Configuration Options
-
-### Aggregation Modes
-
-| Mode | Use Case | Example |
-|------|----------|---------|
-| `"extend"` | Flatten list of lists | Collecting findings from all files |
-| `"count"` | Sum integers | Counting total issues |
-| `"dict_merge"` | Merge dicts | Building dependency graphs |
-| `"sum"` | Sum numerics | Calculating total complexity |
-| `"max"` | FindCommand failed. max value | Finding worst-case metric |
-| `"min"` | Find min value | Finding best-case metric |
-
-### Threshold Tuning
-
-```python
-# Default: 50 files minimum for parallel
-entries = process_files_parallel(
-    files=files,
-    worker_func=worker,
-    min_files=50  # Adjust based on per-file cost
-)
-
-# High per-file cost (e.g., tree-sitter parsing)
-min_files=20  # Parallelize sooner
-
-# Low per-file cost (e.g., regex matching)
-min_files=100  # Wait for more files
-```
-
-### Timeout Control
-
-```python
-# Default: 180 seconds per batch
-entries = process_files_parallel(
-    files=files,
-    worker_func=worker,
-    timeout=300  # 5 minutes for slow operations
-)
-```
-
-## Migration Examples
-
-### Example 1: Complexity Detector
-
-**File**: `desloppify/engine/detectors/complexity.py`
-
-**Before**:
-```python
-def detect_complexity(path, signals, file_finder, threshold, min_loc):
-    files = file_finder(path)
-    entries = []
-    for filepath in files:
-        entry = analyze_complexity(filepath, signals, threshold, min_loc)
-        if entry:
-            entries.append(entry)
-    return sorted(entries, key=lambda e: -e["score"]), len(files)
-```
-
-**After**:
-```python
-from desloppify.engine._parallel_utils import process_files_parallel
-
-def _complexity_worker(files, path, signals, threshold, min_loc):
-    entries = []
-    for filepath in files:
-        entry = _process_file_for_complexity(filepath, path, signals, threshold, min_loc)
-        if entry:
-            entries.append(entry)
-    return entries
-
-def detect_complexity(path, signals, file_finder, threshold, min_loc):
-    files = file_finder(path)
-    
-    entries = process_files_parallel(
-        files=files,
-        worker_func=_complexity_worker,
-        mode="extend",
-        task_name="complexity detection",
-        path=path,
-        signals=signals,
-        threshold=threshold,
-        min_loc=min_loc
-    )
-    
-    return sorted(entries, key=lambda e: -e["score"]), len(files)
-```
-
-### Example 2: Security Detector
-
-**File**: `desloppify/engine/detectors/security/detector.py`
-
-Already parallelized! Uses the new framework.
-
-### Example 3: Language-Specific Detectors
-
-**Pattern** for all `desloppify/languages/*/detectors/*.py` files:
-
-1. Extract single-file logic into `_process_file_*()` function
-2. Create `_*_worker()` that processes a batch
-3. Replace loop with `process_files_parallel()`
-
-## Performance Impact
-
-### Benchmark Results
-
-**Hardware**: AMD Ryzen 9 5900X (12 cores, 24 threads), Windows 11  
-**Codebase**: desloppify self-scan (674 Python files)
-
-| Mode | Time | CPU Usage | Speedup |
-|------|------|-----------|---------|
-| Sequential | 44.1s | 43.8s | 1.0x |
-| Parallel | 35.4s | 77.5s | **1.25x** |
-
-**Key Insight**: CPU usage increased 77% (77.5s vs 43.8s), proving true multi-core utilization!
-
-### When to Parallelize
-
-✅ **Good candidates** (high per-file cost):
-- Tree-sitter parsing (TypeScript, Python AST)
-- Regex-heavy analysis (code smells, patterns)
-- File I/O + processing (complexity, security)
-- Cross-file analysis (dependency graphs)
-
-❌ **Poor candidates** (low per-file cost):
-- Simple string matching
-- File listing/stat operations
-- In-memory data structure iteration
-
-## Testing
-
-### Unit Tests
-
-```bash
-# Test parallel utilities
-uv run pytest desloppify/tests/detectors/security/test_parallel.py -xvs
-
-# Verify no regressions
-uv run pytest desloppify/tests/detectors/ -xvs
-```
-
-### Integration Tests
-
-```bash
-# Full scan with parallel enabled
-export DESLOPPIFY_PARALLEL=true
-uv run desloppify scan
-
-# Full scan with parallel disabled
-export DESLOPPIFY_PARALLEL=false
-uv run desloppify scan
-```
-
-### Benchmarking
-
-```bash
-# Compare performance
-hyperfine --warmup 1 --runs 3 \
-  -n "sequential" "DESLOPPIFY_PARALLEL=false uv run desloppify scan" \
-  -n "parallel" "DESLOPPIFY_PARALLEL=true uv run desloppify scan"
-```
-
-## Troubleshooting
-
-### Windows Multiprocessing Issues
-
-**Symptom**: `AttributeError: module '__main__' has no attribute 'X'`
-
-**Cause**: Windows spawn mode can't pickle objects defined in `__main__`
-
-**Solution**: Ensure worker functions and data are defined in modules, not __main__
-
-### Worker Timeouts
-
-**Symptom**: `concurrent.futures.TimeoutError`
-
-**Solution**: Increase timeout parameter
 ```python
 entries = process_files_parallel(
-    files=files,
+    files=file_list,
     worker_func=worker,
-    timeout=300  # Increase from default 180s
+    force_parallel=False,
+    mode="extend",
 )
 ```
 
-### Memory Issues
-
-**Symptom**: Out of memory with large file lists
-
-**Solution**: Reduce batch size
-```python
-from desloppify.engine._parallel_utils import calculate_workers
-
-# Force more batches with smaller size
-workers = calculate_workers(len(files), min_batch_size=5)
-```
-
-## Migration Checklist
-
-For each `for filepath in files` loop:
-
-- [ ] Extract single-file processing into standalone function  
-- [ ] Create worker function that processes a batch
-- [ ] Replace loop with `process_files_parallel()`
-- [ ] Choose appropriate aggregation mode
-- [ ] Test with `DESLOPPIFY_PARALLEL=true` and `false`
-- [ ] Verify results match sequential version
-- [ ] Benchmark performance improvement
-- [ ] Update any affected tests
-
-## API Reference
-
-### Core Functions
+### Enable retries for flaky workloads
 
 ```python
-process_files_parallel(
-    files: list[str],
-    worker_func: Callable,
-    mode: Literal["extend", "count", "dict_merge", "sum", "max", "min"],
-    min_files: int = 50,
-    legacy_env_var: str | None = None,
-    timeout: int | None = 180,
-    task_name: str = "file processing",
-    **worker_kwargs
-) -> Any
+entries = process_files_parallel(
+    files=file_list,
+    worker_func=worker,
+    mode="extend",
+    timeout=300,
+    max_retries=3,
+    fail_on_incomplete=False,
+)
 ```
 
-```python
-should_parallelize(
-    file_count: int,
-    min_files: int = 50,
-    legacy_env_var: str | None = None
-) -> bool
-```
+## Operational guidance
 
-```python
-calculate_workers(
-    file_count: int,
-    min_batch_size: int = 10,
-    max_workers: int | None = None
-) -> int
-```
+- Prefer module-level worker functions (not closures/lambdas) for Windows compatibility.
+- Keep worker kwargs pickle-safe and small.
+- For heavy shared context maps, pass batch-local subsets when possible (see `extract_batch_zones`).
+- Start with `force_parallel=False` while validating detector correctness, then enable auto/forced parallel.
 
-```python
-aggregate_results(
-    results: list[Any],
-    mode: Literal["extend", "count", "dict_merge", "sum", "max", "min"]
-) -> Any
-```
+## Where to look in code
 
-## Next Steps
-
-1. **Migrate remaining detectors** (56 loops identified)
-2. **Optimize batch sizes** per detector type  
-3. **Add per-detector benchmark tests**
-4. **Document performance characteristics**
-5. **Consider async I/O** for I/O-bound operations
-
-## References
-
-- Centralized module: `desloppify/engine/_parallel_utils.py`
-- Example migration: `desloppify/engine/detectors/complexity.py`
-- Tests: `desloppify/tests/detectors/security/test_parallel.py`
-- Benchmark docs: `docs/PARALLEL_SECURITY_SCANNING.md`
+- Framework core: `desloppify/engine/parallel_utils.py`
+- CLI bootstrap (Windows freeze support): `desloppify/cli.py`
+- Scan command parser (`scan` options): `desloppify/app/cli_support/parser_groups.py`
+- Review parallel parser options: `desloppify/app/cli_support/parser_groups_admin_review.py`
+- Review runtime policy normalization: `desloppify/app/commands/review/runtime/policy.py`
+- Example detector usage: `desloppify/engine/detectors/security/detector.py`

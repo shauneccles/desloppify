@@ -12,6 +12,7 @@ from pathlib import Path
 from desloppify.base.discovery.file_paths import rel
 from desloppify.base.output.terminal import colorize
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import persistent_parallel_pool
 from desloppify.engine.planning.helpers import is_subjective_phase
 from desloppify.engine.policy.zones import ZONE_POLICIES, FileZoneMap
 from desloppify.languages import auto_detect_lang, available_langs, get_lang
@@ -90,11 +91,12 @@ def _run_phases(path: Path, lang: LangRun, phases: list[DetectorPhase]) -> tuple
 
     groups = _build_phase_groups(phases)
     total = len(phases)
-    for idx, phase in enumerate(phases, start=1):
-        _stderr(f"  [{idx}/{total}] {phase.label}...")
-        phase_issues, phase_potentials = phase.run(path, lang)
-        all_potentials.update(phase_potentials)
-        issues.extend(phase_issues)
+    with persistent_parallel_pool():
+        for idx, phase in enumerate(phases, start=1):
+            _stderr(f"  [{idx}/{total}] {phase.label}...")
+            phase_issues, phase_potentials = phase.run(path, lang)
+            all_potentials.update(phase_potentials)
+            issues.extend(phase_issues)
 
     return issues, all_potentials
 
