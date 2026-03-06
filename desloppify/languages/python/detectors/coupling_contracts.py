@@ -7,6 +7,7 @@ from pathlib import Path
 
 from desloppify.base.discovery.source import find_py_files
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 
 _IGNORED_SELF_ATTRS = {"logger"}
 
@@ -72,51 +73,79 @@ def detect_implicit_mixin_contracts(
     path: Path, *, min_required_attrs: int = 3
 ) -> tuple[list[dict], int]:
     """Detect mixin-like classes that rely on undeclared host self-attributes."""
+    files = find_py_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_coupling_contract_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="python implicit mixin contracts",
+        min_required_attrs=min_required_attrs,
+    )
+    normalized_batches = batch_results if isinstance(batch_results, list) else [batch_results]
     entries: list[dict] = []
     candidates = 0
-
-    for filepath in find_py_files(path):
-        full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
-        try:
-            content = full.read_text()
-            tree = ast.parse(content, filename=str(full))
-        except (OSError, SyntaxError, UnicodeDecodeError) as exc:
-            # Preserve parse/read context while intentionally skipping broken files.
-            _ = (full, exc)
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
-
-        for node in tree.body:
-            if not isinstance(node, ast.ClassDef):
-                continue
-            if not _is_mixin_candidate(filepath, node.name):
-                continue
-            candidates += 1
-
-            declared = _class_declared_contract_attrs(node)
-            reads, writes = _collect_self_attrs(node)
-            required = {
-                name
-                for name in (reads - writes - declared)
-                if name and not name.startswith("__") and name not in _IGNORED_SELF_ATTRS
-            }
-            if len(required) < min_required_attrs:
-                continue
-
-            if _class_has_explicit_protocol(node):
-                continue
-
-            entries.append(
-                {
-                    "file": filepath,
-                    "class": node.name,
-                    "line": node.lineno,
-                    "required_attrs": sorted(required),
-                    "required_count": len(required),
-                }
-            )
+        entries.extend(batch.get("entries", []))
+        candidates += int(batch.get("candidates", 0))
 
     entries.sort(key=lambda item: (-item["required_count"], item["file"], item["class"]))
     return entries, candidates
+
+
+def _process_coupling_contract_file(filepath: str, min_required_attrs: int) -> dict:
+    full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+    try:
+        content = full.read_text()
+        tree = ast.parse(content, filename=str(full))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return {"entries": [], "candidates": 0}
+
+    entries: list[dict] = []
+    candidates = 0
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not _is_mixin_candidate(filepath, node.name):
+            continue
+        candidates += 1
+
+        declared = _class_declared_contract_attrs(node)
+        reads, writes = _collect_self_attrs(node)
+        required = {
+            name
+            for name in (reads - writes - declared)
+            if name and not name.startswith("__") and name not in _IGNORED_SELF_ATTRS
+        }
+        if len(required) < min_required_attrs:
+            continue
+
+        if _class_has_explicit_protocol(node):
+            continue
+
+        entries.append(
+            {
+                "file": filepath,
+                "class": node.name,
+                "line": node.lineno,
+                "required_attrs": sorted(required),
+                "required_count": len(required),
+            }
+        )
+
+    return {"entries": entries, "candidates": candidates}
+
+
+def _coupling_contract_batch_worker(files: list[str], min_required_attrs: int) -> dict:
+    entries: list[dict] = []
+    candidates = 0
+    for filepath in files:
+        result = _process_coupling_contract_file(filepath, min_required_attrs)
+        entries.extend(result.get("entries", []))
+        candidates += int(result.get("candidates", 0))
+    return {"entries": entries, "candidates": candidates}
 
 
 __all__ = ["detect_implicit_mixin_contracts"]

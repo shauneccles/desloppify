@@ -140,13 +140,13 @@ def import_review_issues(
     }
     valid_reviewed_files = valid_reviewed_files_abs
     reviewed_files_rel = {
-        str(file_path).strip()
-        for file_path in reviewed_files
-        if isinstance(file_path, str) and file_path.strip()
+        str(filepath).strip()
+        for filepath in reviewed_files
+        if isinstance(filepath, str) and filepath.strip()
     }
     reviewed_files_abs = {
-        _absolutize_review_path(file_path, project_root=resolved_project_root)
-        for file_path in reviewed_files_rel
+        _absolutize_review_path(filepath, project_root=resolved_project_root)
+        for filepath in reviewed_files_rel
     }
     review_potential_files = valid_reviewed_files | {
         *reviewed_files_rel,

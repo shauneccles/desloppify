@@ -21,7 +21,7 @@ def _padding_lines(count: int) -> str:
 def test_detects_disconnected_dumping_ground_module(tmp_path):
     module = (
         "import os\n"
-        "import json\n"
+        "import orjson\n"
         "import subprocess\n\n"
         "def path_rel(p):\n    return os.path.relpath(p)\n\n"
         "def path_abs(p):\n    return os.path.abspath(path_rel(p))\n\n"

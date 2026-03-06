@@ -28,8 +28,6 @@ def _generate_issues(
     lang_name: str,
     complexity_map: dict[str, float] | None = None,
 ) -> list[dict]:
-    entries: list[dict] = []
-    cmap = complexity_map or {}
     test_files = set(test_quality.keys())
     production_scope = set(scorable) | set(directly_tested) | set(transitively_tested)
     parsed_imports_by_test = build_test_import_index(
@@ -37,6 +35,33 @@ def _generate_issues(
         production_scope,
         lang_name,
     )
+
+    return _generate_issues_for_scorable(
+        scorable,
+        directly_tested,
+        transitively_tested,
+        test_quality,
+        graph,
+        lang_name,
+        parsed_imports_by_test=parsed_imports_by_test,
+        complexity_map=complexity_map,
+    )
+
+
+def _generate_issues_for_scorable(
+    scorable: set[str],
+    directly_tested: set[str],
+    transitively_tested: set[str],
+    test_quality: dict[str, dict],
+    graph: dict,
+    lang_name: str,
+    *,
+    parsed_imports_by_test: dict[str, set[str]],
+    complexity_map: dict[str, float] | None = None,
+) -> list[dict]:
+    entries: list[dict] = []
+    cmap = complexity_map or {}
+    test_files = set(test_quality.keys())
 
     for filepath in scorable:
         loc = _file_loc(filepath)
@@ -313,4 +338,5 @@ __all__ = [
     "_select_direct_test_quality_issue",
     "_transitive_coverage_gap_issue",
     "_untested_module_issue",
+    "_generate_issues_for_scorable",
 ]

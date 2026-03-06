@@ -536,7 +536,7 @@ class TestPrepareHolisticReview:
             for filepath in batch.get("files_to_read", [])
         ]
         assert batch_files
-        assert all(not file_path.startswith("Wan2GP/") for file_path in batch_files)
+        assert all(not filepath.startswith("Wan2GP/") for filepath in batch_files)
 
         concern_signals = [
             signal

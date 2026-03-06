@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import math
 from datetime import UTC, datetime
 from functools import partial
@@ -331,7 +331,10 @@ def _merge_and_write_results(
         "missing_dimensions": missing_after_import,
     }
     merged_path = run_dir / "holistic_issues_merged.json"
-    safe_write_text_fn(merged_path, json.dumps(merged, indent=2) + "\n")
+    safe_write_text_fn(
+        merged_path,
+        orjson.dumps(merged, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+    )
     print(colorize_fn(f"\n  Merged outputs: {merged_path}", "bold"))
     print_review_quality(merged.get("review_quality", {}), colorize_fn=colorize_fn)
     return merged_path
@@ -526,7 +529,10 @@ def do_run_batches(
             },
         }
         dry_summary_path = run_dir / "run_summary.json"
-        safe_write_text_fn(dry_summary_path, json.dumps(dry_summary, indent=2) + "\n")
+        safe_write_text_fn(
+            dry_summary_path,
+            orjson.dumps(dry_summary, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+        )
 
         n = len(selected_indexes)
         print(

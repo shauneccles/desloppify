@@ -9,8 +9,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from desloppify.base.discovery.source import find_py_files
-from desloppify.base.discovery.paths import get_project_root
+from desloppify.core._internal.text_utils import PROJECT_ROOT
+from desloppify.core.discovery_api import find_py_files
 from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ def _is_singular_plural(a: str, b: str) -> bool:
 
 
 def _load_dict_key_visitor():
-    module = importlib.import_module(".visitor", package=__package__)
+    module = importlib.import_module(".dict_keys_visitor", package=__package__)
     return module.DictKeyVisitor
 
 
@@ -112,19 +112,19 @@ def _get_str_key(node: ast.expr) -> str | None:
     return None
 
 
-def _read_python_source(filepath: str, *, purpose: str) -> str | None:
+def _read_and_parse_python_file(filepath: str, *, purpose: str) -> tuple[Path, ast.AST] | None:
     try:
-        file_path = (
-            Path(filepath)
-            if Path(filepath).is_absolute()
-            else get_project_root() / filepath
-        )
-        return file_path.read_text(encoding="utf-8", errors="replace")
+        file_path = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        source = file_path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        logger.debug(
-            "Skipping unreadable python file %s in %s pass: %s", filepath, purpose, exc
-        )
+        logger.debug("Skipping unreadable file during %s scan: %s", purpose, filepath, exc_info=exc)
         return None
+    try:
+        tree = ast.parse(source, filename=filepath)
+    except SyntaxError as exc:
+        logger.debug("Skipping unparsable file during %s scan: %s", purpose, filepath, exc_info=exc)
+        return None
+    return file_path, tree
 
 
 # ── Pass 1: Single-scope dict key analysis ────────────────
@@ -136,23 +136,14 @@ def _process_dict_key_file(filepath: str, dict_key_visitor) -> tuple[list[dict],
     Returns:
         Tuple of (findings, dict_literals)
     """
-    source = _read_python_source(filepath, purpose="dict-key")
-    if source is None:
+    parsed = _read_and_parse_python_file(filepath, purpose="dict-key")
+    if parsed is None:
         return [], []
-
-    try:
-        tree = ast.parse(source, filename=filepath)
-    except SyntaxError as exc:
-        logger.debug(
-            "Skipping unparseable python file %s in dict-key pass: %s",
-            filepath,
-            exc,
-        )
-        return [], []
+    _, tree = parsed
 
     visitor = dict_key_visitor(filepath)
     visitor.visit(tree)
-    return visitor._issues, visitor._dict_literals
+    return visitor._findings, visitor._dict_literals
 
 
 def _dict_key_flow_batch_worker(files: list[str], dict_key_visitor) -> tuple[list[dict], list[dict]]:
@@ -172,7 +163,8 @@ def detect_dict_key_flow(path: Path) -> tuple[list[dict], int]:
     """Walk all .py files, run DictKeyVisitor. Returns (entries, files_checked)."""
     dict_key_visitor = _load_dict_key_visitor()
     files = find_py_files(path)
-
+    
+    # Process files in parallel
     batch_results = process_files_parallel(
         files=files,
         worker_func=_dict_key_flow_batch_worker,
@@ -181,19 +173,23 @@ def detect_dict_key_flow(path: Path) -> tuple[list[dict], int]:
         task_name="dict key flow analysis",
         dict_key_visitor=dict_key_visitor,
     )
-
-    all_issues: list[dict] = []
+    
+    # Aggregate results
+    all_findings: list[dict] = []
     all_literals: list[dict] = []
+    
     if isinstance(batch_results, tuple) and len(batch_results) == 2:
-        all_issues, all_literals = batch_results
+        # Sequential mode - single result
+        all_findings, all_literals = batch_results
     elif isinstance(batch_results, list):
+        # Parallel mode - list of tuples
         for item in batch_results:
             if isinstance(item, tuple) and len(item) == 2:
                 findings, literals = item
-                all_issues.extend(findings)
+                all_findings.extend(findings)
                 all_literals.extend(literals)
 
-    return all_issues, len(files)
+    return all_findings, len(files)
 
 
 # ── Pass 2: Schema drift clustering ──────────────────────
@@ -206,8 +202,16 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 
 
 def _read_python_file(filepath: str, *, path: Path) -> str | None:
-    del path
-    return _read_python_source(filepath, purpose="schema-drift")
+    try:
+        file_path = (
+            Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+        )
+        return file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        logger.debug(
+            "Skipping unreadable python file %s in schema-drift pass: %s", filepath, exc
+        )
+        return None
 
 
 def _parse_python_ast(source: str, *, filepath: str) -> ast.AST | None:
@@ -339,8 +343,8 @@ def _closest_consensus_key(outlier_key: str, consensus: set[str]) -> str | None:
     return None
 
 
-def _build_schema_drift_issues(clusters: list[list[dict]]) -> list[dict]:
-    issues: list[dict] = []
+def _build_schema_drift_findings(clusters: list[list[dict]]) -> list[dict]:
+    findings: list[dict] = []
     for cluster in clusters:
         if len(cluster) < 3:
             continue
@@ -357,7 +361,7 @@ def _build_schema_drift_issues(clusters: list[list[dict]]) -> list[dict]:
                 tier = 2 if len(cluster) >= 5 else 3
                 confidence = "high" if len(cluster) >= 5 else "medium"
                 suggestion = f' Did you mean "{close_match}"?' if close_match else ""
-                issues.append(
+                findings.append(
                     {
                         "file": member["file"],
                         "kind": "schema_drift",
@@ -375,7 +379,7 @@ def _build_schema_drift_issues(clusters: list[list[dict]]) -> list[dict]:
                         ),
                     }
                 )
-    return issues
+    return findings
 
 
 def detect_schema_drift(path: Path) -> tuple[list[dict], int]:
@@ -390,13 +394,6 @@ def detect_schema_drift(path: Path) -> tuple[list[dict], int]:
         return [], len(all_literals)
 
     clusters = _cluster_by_jaccard(all_literals, threshold=0.8)
-    issues = _build_schema_drift_issues(clusters)
+    findings = _build_schema_drift_findings(clusters)
 
-    return issues, len(all_literals)
-
-
-__all__ = [
-    "TrackedDict",
-    "detect_dict_key_flow",
-    "detect_schema_drift",
-]
+    return findings, len(all_literals)

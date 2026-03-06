@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import sys
-import os
-import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,12 +81,71 @@ def _select_phases(lang: LangRun, *, include_slow: bool, profile: str) -> list[D
     return phases
 
 
+def _build_phase_groups(phases: list[DetectorPhase]) -> list[list[DetectorPhase]]:
+    """Group phases while respecting known dependency barriers.
+
+    The grouping is conservative and used to preserve ordering constraints between
+    structural/dependency-producing phases and dependent smell/coverage phases.
+    """
+    groups: list[list[DetectorPhase]] = []
+    current: list[DetectorPhase] = []
+
+    seen_labels: set[str] = set()
+
+    def _flush_current() -> None:
+        nonlocal current
+        if current:
+            groups.append(current)
+            current = []
+
+    for phase in phases:
+        label = (phase.label or "").strip()
+        normalized = label.lower()
+
+        is_hard_barrier = normalized in {
+            "structural analysis",
+            "coupling + cycles + orphaned",
+            "test coverage",
+            "mutable state",
+        }
+
+        if is_hard_barrier:
+            _flush_current()
+            groups.append([phase])
+            seen_labels.add(normalized)
+            continue
+
+        if normalized == "private imports":
+            has_dep_graph = "coupling + cycles + orphaned" in seen_labels
+            _flush_current()
+            if has_dep_graph:
+                current = [phase]
+            else:
+                groups.append([phase])
+            seen_labels.add(normalized)
+            continue
+
+        if normalized == "code smells":
+            has_private_imports = "private imports" in seen_labels
+            if has_private_imports and current and current[0].label.lower() == "private imports":
+                current.append(phase)
+                _flush_current()
+            else:
+                _flush_current()
+                groups.append([phase])
+            seen_labels.add(normalized)
+            continue
+
+        current.append(phase)
+        seen_labels.add(normalized)
+
+    _flush_current()
+    return groups
+
+
 def _run_phases(path: Path, lang: LangRun, phases: list[DetectorPhase]) -> tuple[list[Issue], dict[str, int]]:
     issues: list[Issue] = []
     all_potentials: dict[str, int] = {}
-    phase_timings: list[tuple[str, float]] = []
-
-    groups = _build_phase_groups(phases)
     total = len(phases)
     with persistent_parallel_pool():
         for idx, phase in enumerate(phases, start=1):

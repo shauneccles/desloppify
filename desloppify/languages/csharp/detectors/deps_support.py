@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
+import orjson
 import re
 try:
     import defusedxml.ElementTree as ET
@@ -151,8 +151,8 @@ def parse_project_assets_references(csproj_file: Path) -> set[Path]:
     if not assets_file.exists():
         return set()
     try:
-        payload = json.loads(assets_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = orjson.loads(assets_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, orjson.JSONDecodeError):
         return set()
     if not isinstance(payload, dict):
         return set()
@@ -297,7 +297,7 @@ def render_deps_for_graph(args: argparse.Namespace, *, graph: dict[str, dict]) -
     if getattr(args, "file", None):
         coupling = get_coupling_score(args.file, graph)
         if getattr(args, "json", False):
-            print(json.dumps({"file": rel(args.file), **coupling}, indent=2))
+            print(orjson.dumps({"file": rel(args.file), **coupling}, option=orjson.OPT_INDENT_2).decode("utf-8"))
             return
         print(colorize(f"\nDependency info: {rel(args.file)}\n", "bold"))
         print(f"  Fan-in (importers):  {coupling['fan_in']}")
@@ -312,7 +312,7 @@ def render_deps_for_graph(args: argparse.Namespace, *, graph: dict[str, dict]) -
     if getattr(args, "json", False):
         top = by_importers[: getattr(args, "top", 20)]
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "files": len(graph),
                     "entries": [
@@ -324,8 +324,8 @@ def render_deps_for_graph(args: argparse.Namespace, *, graph: dict[str, dict]) -
                         for filepath, entry in top
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 
@@ -343,7 +343,7 @@ def render_cycles_for_graph(args: argparse.Namespace, *, graph: dict[str, dict])
     cycles, _ = detect_cycles(graph)
     if getattr(args, "json", False):
         print(
-            json.dumps(
+            orjson.dumps(
                 {
                     "count": len(cycles),
                     "cycles": [
@@ -351,8 +351,8 @@ def render_cycles_for_graph(args: argparse.Namespace, *, graph: dict[str, dict])
                         for cycle in cycles
                     ],
                 },
-                indent=2,
-            )
+                option=orjson.OPT_INDENT_2,
+            ).decode("utf-8")
         )
         return
 

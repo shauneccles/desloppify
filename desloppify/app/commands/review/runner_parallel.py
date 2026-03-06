@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -127,7 +127,10 @@ def collect_batch_results(
             continue
         if parsed_from_log:
             try:
-                safe_write_text(raw_path, json.dumps(payload, indent=2) + "\n")
+                safe_write_text(
+                    raw_path,
+                    orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+                )
             except OSError as exc:
                 logger.warning("Failed writing normalized batch payload %s: %s", raw_path, exc)
         try:

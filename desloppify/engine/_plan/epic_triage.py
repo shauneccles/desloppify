@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -115,8 +115,8 @@ def triage_epics(
     # Call LLM
     try:
         raw_response = deps.llm_call(_TRIAGE_SYSTEM_PROMPT, prompt)
-        raw_json = json.loads(raw_response)
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raw_json = orjson.loads(raw_response)
+    except (orjson.JSONDecodeError, TypeError, ValueError) as exc:
         logger.error("Epic triage LLM response parse error: %s", exc)
         result = TriageMutationResult()
         result.strategy_summary = f"Triage failed: {exc}"

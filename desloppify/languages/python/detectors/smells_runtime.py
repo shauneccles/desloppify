@@ -7,7 +7,7 @@ from pathlib import Path
 
 from desloppify.base.discovery.source import find_py_files
 from desloppify.base.discovery.paths import get_project_root
-from desloppify.base.output.fallbacks import log_best_effort_failure
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.languages.python.detectors.smells_ast._dispatch import (
     detect_ast_smells,
 )
@@ -187,6 +187,83 @@ def _detect_swallowed_errors(
             )
 
 
+def _process_python_smells_file(
+    filepath: str,
+    smell_checks: list[dict],
+    scan_root: str,
+) -> tuple[dict[str, list[dict]], dict[tuple[str, str], list[tuple[str, int]]]]:
+    smell_counts: dict[str, list[dict]] = {smell["id"]: [] for smell in smell_checks}
+    constants_by_key: dict[tuple[str, str], list[tuple[str, int]]] = {}
+
+    try:
+        file_path = (
+            Path(filepath)
+            if Path(filepath).is_absolute()
+            else get_project_root() / filepath
+        )
+        content = file_path.read_text()
+        lines = content.splitlines()
+    except (OSError, UnicodeDecodeError):
+        return smell_counts, constants_by_key
+
+    multiline_string_lines = build_string_line_set(lines)
+
+    for check in smell_checks:
+        pattern = check.get("pattern")
+        if pattern is None:
+            continue
+        for i, line in enumerate(lines):
+            if i in multiline_string_lines:
+                continue
+            match = re.search(pattern, line)
+            if match and not match_is_in_string(line, match.start()):
+                if check["id"] == "hardcoded_url" and re.match(
+                    r"^[A-Z_][A-Z0-9_]*\s*=",
+                    line.strip(),
+                ):
+                    continue
+                smell_counts[check["id"]].append(
+                    {
+                        "file": filepath,
+                        "line": i + 1,
+                        "content": line.strip()[:100],
+                    }
+                )
+
+    _detect_empty_except(filepath, lines, smell_counts)
+    _detect_swallowed_errors(filepath, lines, smell_counts)
+    detect_ast_smells(filepath, content, smell_counts)
+    detect_star_import_no_all(filepath, content, Path(scan_root), smell_counts)
+    detect_vestigial_parameter(filepath, content, lines, smell_counts)
+    collect_module_constants(filepath, content, constants_by_key)
+    return smell_counts, constants_by_key
+
+
+def _python_smells_batch_worker(
+    files: list[str],
+    smell_checks: list[dict],
+    scan_root: str,
+) -> dict:
+    batch_smell_counts: dict[str, list[dict]] = {smell["id"]: [] for smell in smell_checks}
+    batch_constants: dict[tuple[str, str], list[tuple[str, int]]] = {}
+
+    for filepath in files:
+        file_smells, file_constants = _process_python_smells_file(
+            filepath,
+            smell_checks,
+            scan_root,
+        )
+        for smell_id, matches in file_smells.items():
+            batch_smell_counts.setdefault(smell_id, []).extend(matches)
+        for key, values in file_constants.items():
+            batch_constants.setdefault(key, []).extend(values)
+
+    return {
+        "smell_counts": batch_smell_counts,
+        "constants": batch_constants,
+    }
+
+
 def detect_smells_runtime(
     path: Path,
     *,
@@ -197,56 +274,31 @@ def detect_smells_runtime(
     """Detect Python code smell patterns. Returns (entries, total_files_checked)."""
     smell_counts: dict[str, list[dict]] = {smell["id"]: [] for smell in smell_checks}
     files = find_py_files(path)
+    if not files:
+        return [], 0
+
+    scan_files = [filepath for filepath in files if not is_test_path_fn(filepath)]
+    if not scan_files:
+        return [], len(files)
+
     constants_by_key: dict[tuple[str, str], list[tuple[str, int]]] = {}
 
-    for filepath in files:
-        try:
-            file_path = (
-                Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
-            )
-            content = file_path.read_text()
-            lines = content.splitlines()
-        except (OSError, UnicodeDecodeError) as exc:
-            log_best_effort_failure(
-                logger,
-                f"read Python file for smell scan {filepath}",
-                exc,
-            )
-            continue
+    batch_results = process_files_parallel(
+        files=scan_files,
+        worker_func=_python_smells_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="python smells runtime",
+        smell_checks=smell_checks,
+        scan_root=str(path.resolve()),
+    )
+    normalized_results = batch_results if isinstance(batch_results, list) else [batch_results]
 
-        if is_test_path_fn(filepath):
-            continue
-
-        multiline_string_lines = build_string_line_set(lines)
-
-        for check in smell_checks:
-            pattern = check.get("pattern")
-            if pattern is None:
-                continue
-            for i, line in enumerate(lines):
-                if i in multiline_string_lines:
-                    continue
-                match = re.search(pattern, line)
-                if match and not match_is_in_string(line, match.start()):
-                    if check["id"] == "hardcoded_url" and re.match(
-                        r"^[A-Z_][A-Z0-9_]*\s*=",
-                        line.strip(),
-                    ):
-                        continue
-                    smell_counts[check["id"]].append(
-                        {
-                            "file": filepath,
-                            "line": i + 1,
-                            "content": line.strip()[:100],
-                        }
-                    )
-
-        _detect_empty_except(filepath, lines, smell_counts)
-        _detect_swallowed_errors(filepath, lines, smell_counts)
-        detect_ast_smells(filepath, content, smell_counts)
-        detect_star_import_no_all(filepath, content, path, smell_counts)
-        detect_vestigial_parameter(filepath, content, lines, smell_counts)
-        collect_module_constants(filepath, content, constants_by_key)
+    for batch in normalized_results:
+        for smell_id, matches in batch.get("smell_counts", {}).items():
+            smell_counts.setdefault(smell_id, []).extend(matches)
+        for key, values in batch.get("constants", {}).items():
+            constants_by_key.setdefault(key, []).extend(values)
 
     detect_duplicate_constants(constants_by_key, smell_counts)
 

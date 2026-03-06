@@ -22,14 +22,14 @@ def _detector_files() -> list[Path]:
 def test_detectors_do_not_import_language_modules() -> None:
     offenders: list[str] = []
 
-    for file_path in _detector_files():
-        tree = ast.parse(file_path.read_text(), filename=str(file_path))
+    for filepath in _detector_files():
+        tree = ast.parse(filepath.read_text(), filename=str(filepath))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     name = alias.name
                     if name == "desloppify.languages" or name.startswith("desloppify.languages."):
-                        offenders.append(f"{file_path}:{node.lineno} imports {name}")
+                        offenders.append(f"{filepath}:{node.lineno} imports {name}")
                 continue
 
             if not isinstance(node, ast.ImportFrom):
@@ -38,7 +38,7 @@ def test_detectors_do_not_import_language_modules() -> None:
             module = node.module or ""
             level = node.level or 0
             if module == "desloppify.languages" or module.startswith("desloppify.languages."):
-                offenders.append(f"{file_path}:{node.lineno} imports from {module}")
+                offenders.append(f"{filepath}:{node.lineno} imports from {module}")
                 continue
 
             relative_module = "." * level + module
@@ -46,7 +46,7 @@ def test_detectors_do_not_import_language_modules() -> None:
                 ".lang"
             ):
                 offenders.append(
-                    f"{file_path}:{node.lineno} imports from relative module {relative_module}"
+                    f"{filepath}:{node.lineno} imports from relative module {relative_module}"
                 )
 
     assert not offenders, "\n".join(offenders)
@@ -55,14 +55,14 @@ def test_detectors_do_not_import_language_modules() -> None:
 def test_detectors_do_not_use_dynamic_lang_import_strings() -> None:
     offenders: list[str] = []
 
-    for file_path in _detector_files():
-        tree = ast.parse(file_path.read_text(), filename=str(file_path))
+    for filepath in _detector_files():
+        tree = ast.parse(filepath.read_text(), filename=str(filepath))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                 continue
             if _DOT_LANG_PATTERN.search(node.value):
                 offenders.append(
-                    f"{file_path}:{node.lineno} contains string {node.value!r}"
+                    f"{filepath}:{node.lineno} contains string {node.value!r}"
                 )
 
     assert not offenders, "\n".join(offenders)

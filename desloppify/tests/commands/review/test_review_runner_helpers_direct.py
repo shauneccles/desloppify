@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import time
 from pathlib import Path
 
@@ -69,7 +69,7 @@ def test_collect_batch_results_recovers_from_log_stdout_payload(tmp_path: Path) 
     log_path = logs_dir / "batch-1.log"
     log_path.write_text(
         "STDOUT:\n"
-        + json.dumps(payload)
+        + orjson.dumps(payload).decode("utf-8")
         + "\n\nSTDERR:\nrunner transient error\n"
     )
 
@@ -78,7 +78,7 @@ def test_collect_batch_results_recovers_from_log_stdout_payload(tmp_path: Path) 
         failures=[0],
         output_files={0: raw_path},
         allowed_dims={"logic_clarity"},
-        extract_payload_fn=lambda raw: json.loads(raw),
+        extract_payload_fn=lambda raw: orjson.loads(raw),
         normalize_result_fn=lambda parsed, _allowed: (
             parsed.get("assessments", {}),
             parsed.get("issues", []),
@@ -90,20 +90,22 @@ def test_collect_batch_results_recovers_from_log_stdout_payload(tmp_path: Path) 
     assert failures == []
     assert len(batch_results) == 1
     assert raw_path.exists()
-    persisted = json.loads(raw_path.read_text())
+    persisted = orjson.loads(raw_path.read_text())
     assert persisted["assessments"]["logic_clarity"] == 91.0
 
 
 def test_collect_batch_results_marks_failure_on_normalize_error(tmp_path: Path) -> None:
     raw_path = tmp_path / "batch-1.raw.txt"
-    raw_path.write_text(json.dumps({"assessments": {"logic_clarity": 50.0}, "issues": []}))
+    raw_path.write_text(
+        orjson.dumps({"assessments": {"logic_clarity": 50.0}, "issues": []}).decode("utf-8")
+    )
 
     batch_results, failures = runner_helpers_mod.collect_batch_results(
         selected_indexes=[0],
         failures=[],
         output_files={0: raw_path},
         allowed_dims={"logic_clarity"},
-        extract_payload_fn=lambda raw: json.loads(raw),
+        extract_payload_fn=lambda raw: orjson.loads(raw),
         normalize_result_fn=lambda _parsed, _allowed: (_ for _ in ()).throw(
             ValueError("normalize failed")
         ),

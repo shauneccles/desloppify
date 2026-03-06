@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from desloppify.engine.parallel_utils import process_files_parallel
+
 from . import PARSE_INIT_ERRORS
 from ._cache import _PARSE_CACHE
 from ._extractors import _get_parser
@@ -59,28 +61,14 @@ def detect_empty_catches(
         logger.debug("tree-sitter init failed: %s", exc)
         return []
 
-    entries: list[dict] = []
-    for filepath in file_list:
-        cached = _PARSE_CACHE.get_or_parse(filepath, parser, spec.grammar)
-        if cached is None:
-            continue
-        _source, tree = cached
-
-        # Walk the full AST looking for catch/except nodes.
-        stack = [tree.root_node]
-        while stack:
-            node = stack.pop()
-            if node.type in _CATCH_NODE_TYPES:
-                if _is_empty_handler(node):
-                    entries.append({
-                        "file": filepath,
-                        "line": node.start_point[0] + 1,
-                        "type": node.type,
-                    })
-            for i in range(node.child_count - 1, -1, -1):
-                stack.append(node.children[i])
-
-    return entries
+    return process_files_parallel(
+        files=file_list,
+        worker_func=_detect_empty_catches_batch,
+        mode="extend",
+        min_files=100,
+        task_name=f"tree-sitter {spec.grammar} empty catches",
+        grammar=spec.grammar,
+    )
 
 
 def _is_empty_handler(catch_node) -> bool:
@@ -152,23 +140,55 @@ def detect_unreachable_code(
         logger.debug("tree-sitter init failed: %s", exc)
         return []
 
+    return process_files_parallel(
+        files=file_list,
+        worker_func=_detect_unreachable_batch,
+        mode="extend",
+        min_files=100,
+        task_name=f"tree-sitter {spec.grammar} unreachable code",
+        grammar=spec.grammar,
+    )
+
+
+def _detect_empty_catches_batch(files: list[str], grammar: str) -> list[dict]:
+    parser, _language = _get_parser(grammar)
     entries: list[dict] = []
-    for filepath in file_list:
-        cached = _PARSE_CACHE.get_or_parse(filepath, parser, spec.grammar)
+    for filepath in files:
+        cached = _PARSE_CACHE.get_or_parse(filepath, parser, grammar)
         if cached is None:
             continue
         _source, tree = cached
+        stack = [tree.root_node]
+        while stack:
+            node = stack.pop()
+            if node.type in _CATCH_NODE_TYPES and _is_empty_handler(node):
+                entries.append(
+                    {
+                        "file": filepath,
+                        "line": node.start_point[0] + 1,
+                        "type": node.type,
+                    }
+                )
+            for i in range(node.child_count - 1, -1, -1):
+                stack.append(node.children[i])
+    return entries
 
-        # Walk the AST looking for sequence blocks.
+
+def _detect_unreachable_batch(files: list[str], grammar: str) -> list[dict]:
+    parser, _language = _get_parser(grammar)
+    entries: list[dict] = []
+    for filepath in files:
+        cached = _PARSE_CACHE.get_or_parse(filepath, parser, grammar)
+        if cached is None:
+            continue
+        _source, tree = cached
         stack = [tree.root_node]
         while stack:
             node = stack.pop()
             if node.type in _SEQUENCE_NODE_TYPES:
                 _check_sequence_for_unreachable(node, filepath, entries)
-
             for i in range(node.child_count - 1, -1, -1):
                 stack.append(node.children[i])
-
     return entries
 
 

@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 import pytest
 
-from desloppify.engine.parallel_utils import aggregate_results, process_files_parallel
+from desloppify.engine.parallel_utils import (
+    MAX_PROCESS_WORKERS,
+    aggregate_results,
+    calculate_workers,
+    persistent_parallel_pool,
+    process_files_parallel,
+)
 
 
 _FLAKY_CALL_COUNT: dict[str, int] = defaultdict(int)
@@ -206,3 +212,20 @@ def test_dict_merge_end_to_end_mixed_values_across_batches(dict_merge_mixed_work
 def test_aggregate_results_raises_for_unknown_mode() -> None:
     with pytest.raises(ValueError, match="Unknown aggregation mode"):
         aggregate_results([1, 2, 3], cast(Any, "unknown"))
+
+
+def test_calculate_workers_respects_global_process_cap() -> None:
+    with patch("desloppify.engine.parallel_utils.get_cpu_count", return_value=64):
+        workers = calculate_workers(file_count=10_000)
+    assert workers == MAX_PROCESS_WORKERS
+
+
+def test_persistent_parallel_pool_respects_global_process_cap() -> None:
+    with (
+        patch("desloppify.engine.parallel_utils.get_cpu_count", return_value=64),
+        patch("desloppify.engine.parallel_utils.concurrent.futures.ProcessPoolExecutor") as mock_pool,
+    ):
+        with persistent_parallel_pool():
+            pass
+
+    assert mock_pool.call_args.kwargs["max_workers"] == MAX_PROCESS_WORKERS

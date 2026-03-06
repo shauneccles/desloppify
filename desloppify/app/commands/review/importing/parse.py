@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict
@@ -280,8 +280,8 @@ def _load_import_json(import_file: str) -> tuple[object | None, list[str]]:
     if not issues_path.exists():
         return None, [f"file not found: {import_file}"]
     try:
-        return json.loads(issues_path.read_text()), []
-    except (json.JSONDecodeError, OSError) as exc:
+        return orjson.loads(issues_path.read_bytes()), []
+    except (orjson.JSONDecodeError, OSError) as exc:
         return None, [f"error reading issues: {exc}"]
 
 

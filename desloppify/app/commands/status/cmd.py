@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
+import orjson
 
 from desloppify import state as state_mod
 from desloppify.app.commands.helpers.guardrails import print_triage_guardrail_info

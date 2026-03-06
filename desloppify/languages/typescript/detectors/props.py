@@ -12,6 +12,7 @@ from desloppify.base.discovery.source import find_ts_files
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.output.terminal import colorize, print_table
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -32,68 +33,97 @@ def detect_prop_interface_bloat(
         re.MULTILINE,
     )
 
-    for filepath in find_ts_files(path):
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-            for m in interface_re.finditer(content):
-                total_interfaces += 1
-                name = m.group(1)
-                start = m.end()
-                # Count properties by issue the closing brace
-                brace_depth = 1
-                pos = start
-                prop_count = 0
-                while pos < len(content) and brace_depth > 0:
-                    ch = content[pos]
-                    if ch == "{":
-                        brace_depth += 1
-                    elif ch == "}":
-                        brace_depth -= 1
-                    elif ch == "\n" and brace_depth == 1:
-                        # Count non-empty, non-comment lines as properties
-                        line_start = pos + 1
-                        line_end = content.find("\n", line_start)
-                        if line_end == -1:
-                            line_end = len(content)
-                        line = content[line_start:line_end].strip()
-                        if (
-                            line
-                            and not line.startswith("//")
-                            and not line.startswith("*")
-                            and not line.startswith("/**")
-                            and line != "}"
-                        ):
-                            prop_count += 1
-                    pos += 1
-
-                if prop_count > threshold:
-                    kind = (
-                        "context"
-                        if "Context" in name
-                        else "state"
-                        if "State" in name
-                        else "props"
-                    )
-                    entries.append(
-                        {
-                            "file": filepath,
-                            "interface": name,
-                            "prop_count": prop_count,
-                            "line": content[: m.start()].count("\n") + 1,
-                            "kind": kind,
-                        }
-                    )
-        except (OSError, UnicodeDecodeError) as exc:
-            log_best_effort_failure(
-                logger, f"read TypeScript interface file {filepath}", exc
-            )
+    files = find_ts_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_props_bloat_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="typescript prop interface bloat",
+        threshold=threshold,
+        interface_pattern=interface_re.pattern,
+    )
+    normalized_batches = batch_results if isinstance(batch_results, list) else [batch_results]
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
+        entries.extend(batch.get("entries", []))
+        total_interfaces += int(batch.get("total_interfaces", 0))
+
     return sorted(entries, key=lambda e: -e["prop_count"]), total_interfaces
+
+
+def _process_prop_bloat_file(filepath: str, threshold: int, interface_pattern: str) -> dict:
+    interface_re = re.compile(interface_pattern, re.MULTILINE)
+    entries: list[dict] = []
+    total_interfaces = 0
+    try:
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+        content = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        log_best_effort_failure(logger, f"read TypeScript interface file {filepath}", exc)
+        return {"entries": entries, "total_interfaces": total_interfaces}
+
+    for m in interface_re.finditer(content):
+        total_interfaces += 1
+        name = m.group(1)
+        start = m.end()
+        brace_depth = 1
+        pos = start
+        prop_count = 0
+        while pos < len(content) and brace_depth > 0:
+            ch = content[pos]
+            if ch == "{":
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth -= 1
+            elif ch == "\n" and brace_depth == 1:
+                line_start = pos + 1
+                line_end = content.find("\n", line_start)
+                if line_end == -1:
+                    line_end = len(content)
+                line = content[line_start:line_end].strip()
+                if (
+                    line
+                    and not line.startswith("//")
+                    and not line.startswith("*")
+                    and not line.startswith("/**")
+                    and line != "}"
+                ):
+                    prop_count += 1
+            pos += 1
+
+        if prop_count > threshold:
+            kind = (
+                "context"
+                if "Context" in name
+                else "state"
+                if "State" in name
+                else "props"
+            )
+            entries.append(
+                {
+                    "file": filepath,
+                    "interface": name,
+                    "prop_count": prop_count,
+                    "line": content[: m.start()].count("\n") + 1,
+                    "kind": kind,
+                }
+            )
+
+    return {"entries": entries, "total_interfaces": total_interfaces}
+
+
+def _props_bloat_batch_worker(
+    files: list[str], threshold: int, interface_pattern: str
+) -> dict:
+    entries: list[dict] = []
+    total_interfaces = 0
+    for filepath in files:
+        result = _process_prop_bloat_file(filepath, threshold, interface_pattern)
+        entries.extend(result.get("entries", []))
+        total_interfaces += int(result.get("total_interfaces", 0))
+    return {"entries": entries, "total_interfaces": total_interfaces}
 
 
 def cmd_props(args: argparse.Namespace) -> None:

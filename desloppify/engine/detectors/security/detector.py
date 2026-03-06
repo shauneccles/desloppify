@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from desloppify.base.discovery.file_paths import resolve_scan_file
+from desloppify.engine.parallel_utils import (
+    BATCH_TIMEOUT_SECONDS,
+    MAX_RETRY_ATTEMPTS,
+    process_files_parallel,
+)
 from desloppify.engine.policy.zones import FileZoneMap
 
 from .filters import _is_test_file, _should_scan_file, _should_skip_line

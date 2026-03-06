@@ -11,6 +11,7 @@ from desloppify.base.discovery.file_paths import rel
 from desloppify.base.discovery.source import find_tsx_files
 from desloppify.base.output.terminal import colorize, print_table
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.languages.typescript.detectors._smell_helpers import (
     _strip_ts_comments,
     scan_code,
@@ -31,98 +32,24 @@ def detect_state_sync(path: Path) -> tuple[list[dict], int]:
 
     Returns one entry per occurrence with setter names and line number.
     """
-    entries = []
+    files = find_tsx_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_state_sync_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="react state sync detection",
+    )
+    normalized_batches = (
+        batch_results if isinstance(batch_results, list) else [batch_results]
+    )
+    entries: list[dict] = []
     total_effects = 0
-
-    for filepath in find_tsx_files(path):
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-            lines = content.splitlines()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable TSX file %s in state-sync pass: %s", filepath, exc
-            )
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
-
-        # Collect all useState setters in this file
-        setters = set()
-        for m in re.finditer(r"const\s+\[\w+,\s*(set\w+)\]\s*=\s*useState", content):
-            setters.add(m.group(1))
-
-        if not setters:
-            continue
-
-        # Count all useEffect calls (potential) and find matching blocks
-        total_effects += len(re.findall(r"useEffect\s*\(", content))
-        effect_re = re.compile(r"useEffect\s*\(\s*\(\s*\)\s*=>\s*\{")
-        for m in effect_re.finditer(content):
-            # Extract the callback body using brace tracking
-            brace_start = m.end() - 1  # the {
-            depth = 0
-            body_end = None
-            for ci, ch, in_s in scan_code(
-                content, brace_start, min(brace_start + MAX_EFFECT_BODY, len(content))
-            ):
-                if in_s:
-                    continue
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        body_end = ci
-                        break
-
-            if body_end is None:
-                continue
-
-            body = content[brace_start + 1 : body_end]
-            # Strip comments (string-aware to avoid corrupting URLs etc.)
-            body_clean = _strip_ts_comments(body).strip()
-
-            if not body_clean:
-                continue  # empty effect — caught by dead_useeffect
-
-            # Split into statements
-            statements = [
-                s.strip().rstrip(";")
-                for s in re.split(r"[;\n]", body_clean)
-                if s.strip()
-            ]
-            if not statements:
-                continue
-
-            # Check if ALL statements are setter calls from this component's useState
-            matched_setters = set()
-            all_setters = True
-            for stmt in statements:
-                found = False
-                for setter in setters:
-                    if stmt.startswith(setter + "("):
-                        found = True
-                        matched_setters.add(setter)
-                        break
-                if not found:
-                    all_setters = False
-                    break
-
-            if all_setters and matched_setters:
-                line_no = content[: m.start()].count("\n") + 1
-                entries.append(
-                    {
-                        "file": filepath,
-                        "line": line_no,
-                        "setters": sorted(matched_setters),
-                        "content": lines[line_no - 1].strip()[:100]
-                        if line_no <= len(lines)
-                        else "",
-                    }
-                )
+        entries.extend(batch.get("entries", []))
+        total_effects += int(batch.get("total_effects", 0))
 
     return entries, total_effects
 
@@ -133,57 +60,24 @@ def detect_context_nesting(path: Path) -> tuple[list[dict], int]:
     Counts opening <*Provider> tags and tracks nesting depth via matching
     closing tags. Flags files where the max provider depth exceeds 5.
     """
-    entries = []
+    files = find_tsx_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_context_nesting_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="react context nesting detection",
+    )
+    normalized_batches = (
+        batch_results if isinstance(batch_results, list) else [batch_results]
+    )
+    entries: list[dict] = []
     total_files = 0
-    provider_open = re.compile(r"<(\w+Provider)\b(?!.*/>)")  # opening, not self-closing
-    provider_close = re.compile(r"</(\w+Provider)\s*>")
-
-    for filepath in find_tsx_files(path):
-        total_files += 1
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-            lines = content.splitlines()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable TSX file %s in context-nesting pass: %s",
-                filepath,
-                exc,
-            )
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
-
-        depth = 0
-        max_depth = 0
-        providers_at_max: list[str] = []
-        provider_stack: list[str] = []
-
-        for line in lines:
-            # Process opening tags first, then closing, to handle
-            # <FooProvider></FooProvider> on the same line correctly
-            for m in provider_open.finditer(line):
-                depth += 1
-                provider_stack.append(m.group(1))
-                if depth > max_depth:
-                    max_depth = depth
-                    providers_at_max = list(provider_stack)
-
-            for m in provider_close.finditer(line):
-                if provider_stack and provider_stack[-1] == m.group(1):
-                    provider_stack.pop()
-                    depth -= 1
-
-        if max_depth > 5:
-            entries.append(
-                {
-                    "file": filepath,
-                    "depth": max_depth,
-                    "providers": providers_at_max,
-                }
-            )
+        entries.extend(batch.get("entries", []))
+        total_files += int(batch.get("total_files", 0))
 
     return sorted(entries, key=lambda e: -e["depth"]), total_files
 
@@ -194,77 +88,250 @@ def detect_hook_return_bloat(path: Path) -> tuple[list[dict], int]:
     Scans for exported functions named use* and counts the top-level
     properties in their return object literal.
     """
-    entries = []
+    files = find_tsx_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_hook_return_bloat_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="react hook return bloat detection",
+    )
+    normalized_batches = (
+        batch_results if isinstance(batch_results, list) else [batch_results]
+    )
+    entries: list[dict] = []
     total_hooks = 0
-    hook_re = re.compile(r"(?:export\s+)?(?:function|const)\s+(use[A-Z]\w*)")
-
-    for filepath in find_tsx_files(path):
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-            lines = content.splitlines()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable TSX file %s in hook-bloat pass: %s", filepath, exc
-            )
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
-
-        # Also check .ts files with use* names
-        for m in hook_re.finditer(content):
-            hook_name = m.group(1)
-            total_hooks += 1
-            hook_start = content[: m.start()].count("\n")
-
-            # Find the function body by tracking braces from the opening {
-            brace_line = None
-            for k in range(hook_start, min(hook_start + 5, len(lines))):
-                if "{" in lines[k]:
-                    brace_line = k
-                    break
-            if brace_line is None:
-                continue
-
-            # Find end of function
-            depth = 0
-            found_open = False
-            func_end = None
-            for j in range(brace_line, min(brace_line + MAX_FUNC_SCAN, len(lines))):
-                for _, ch, in_s in scan_code(lines[j]):
-                    if in_s:
-                        continue
-                    if ch == "{":
-                        depth += 1
-                        found_open = True
-                    elif ch == "}":
-                        depth -= 1
-                        if found_open and depth == 0:
-                            func_end = j
-                            break
-                if func_end is not None:
-                    break
-
-            if func_end is None:
-                continue
-
-            # Find the last top-level return statement with an object literal
-            # Scan backwards from function end for "return {"
-            func_body = "\n".join(lines[brace_line : func_end + 1])
-            field_count = _count_return_fields(func_body)
-            if field_count is not None and field_count > 12:
-                entries.append(
-                    {
-                        "file": filepath,
-                        "line": hook_start + 1,
-                        "hook": hook_name,
-                        "field_count": field_count,
-                    }
-                )
+        entries.extend(batch.get("entries", []))
+        total_hooks += int(batch.get("total_hooks", 0))
 
     return sorted(entries, key=lambda e: -e["field_count"]), total_hooks
+
+
+def _process_state_sync_file(filepath: str) -> dict:
+    entries: list[dict] = []
+    total_effects = 0
+    try:
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+        content = p.read_text()
+        lines = content.splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable TSX file %s in state-sync pass: %s", filepath, exc
+        )
+        return {"entries": entries, "total_effects": total_effects}
+
+    setters = set()
+    for m in re.finditer(r"const\s+\[\w+,\s*(set\w+)\]\s*=\s*useState", content):
+        setters.add(m.group(1))
+
+    if not setters:
+        return {"entries": entries, "total_effects": total_effects}
+
+    total_effects += len(re.findall(r"useEffect\s*\(", content))
+    effect_re = re.compile(r"useEffect\s*\(\s*\(\s*\)\s*=>\s*\{")
+    for m in effect_re.finditer(content):
+        brace_start = m.end() - 1
+        depth = 0
+        body_end = None
+        for ci, ch, in_s in scan_code(
+            content, brace_start, min(brace_start + MAX_EFFECT_BODY, len(content))
+        ):
+            if in_s:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    body_end = ci
+                    break
+
+        if body_end is None:
+            continue
+
+        body = content[brace_start + 1 : body_end]
+        body_clean = _strip_ts_comments(body).strip()
+        if not body_clean:
+            continue
+
+        statements = [
+            s.strip().rstrip(";")
+            for s in re.split(r"[;\n]", body_clean)
+            if s.strip()
+        ]
+        if not statements:
+            continue
+
+        matched_setters = set()
+        all_setters = True
+        for stmt in statements:
+            found = False
+            for setter in setters:
+                if stmt.startswith(setter + "("):
+                    found = True
+                    matched_setters.add(setter)
+                    break
+            if not found:
+                all_setters = False
+                break
+
+        if all_setters and matched_setters:
+            line_no = content[: m.start()].count("\n") + 1
+            entries.append(
+                {
+                    "file": filepath,
+                    "line": line_no,
+                    "setters": sorted(matched_setters),
+                    "content": lines[line_no - 1].strip()[:100]
+                    if line_no <= len(lines)
+                    else "",
+                }
+            )
+
+    return {"entries": entries, "total_effects": total_effects}
+
+
+def _state_sync_batch_worker(files: list[str]) -> dict:
+    entries: list[dict] = []
+    total_effects = 0
+    for filepath in files:
+        result = _process_state_sync_file(filepath)
+        entries.extend(result.get("entries", []))
+        total_effects += int(result.get("total_effects", 0))
+    return {"entries": entries, "total_effects": total_effects}
+
+
+def _process_context_nesting_file(filepath: str) -> dict:
+    provider_open = re.compile(r"<(\w+Provider)\b(?!.*/>)")
+    provider_close = re.compile(r"</(\w+Provider)\s*>")
+    try:
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+        content = p.read_text()
+        lines = content.splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable TSX file %s in context-nesting pass: %s",
+            filepath,
+            exc,
+        )
+        return {"entry": None, "total_files": 1}
+
+    depth = 0
+    max_depth = 0
+    providers_at_max: list[str] = []
+    provider_stack: list[str] = []
+
+    for line in lines:
+        for m in provider_open.finditer(line):
+            depth += 1
+            provider_stack.append(m.group(1))
+            if depth > max_depth:
+                max_depth = depth
+                providers_at_max = list(provider_stack)
+
+        for m in provider_close.finditer(line):
+            if provider_stack and provider_stack[-1] == m.group(1):
+                provider_stack.pop()
+                depth -= 1
+
+    if max_depth > 5:
+        return {
+            "entry": {
+                "file": filepath,
+                "depth": max_depth,
+                "providers": providers_at_max,
+            },
+            "total_files": 1,
+        }
+    return {"entry": None, "total_files": 1}
+
+
+def _context_nesting_batch_worker(files: list[str]) -> dict:
+    entries: list[dict] = []
+    total_files = 0
+    for filepath in files:
+        result = _process_context_nesting_file(filepath)
+        entry = result.get("entry")
+        if isinstance(entry, dict):
+            entries.append(entry)
+        total_files += int(result.get("total_files", 0))
+    return {"entries": entries, "total_files": total_files}
+
+
+def _process_hook_return_bloat_file(filepath: str) -> dict:
+    entries: list[dict] = []
+    total_hooks = 0
+    hook_re = re.compile(r"(?:export\s+)?(?:function|const)\s+(use[A-Z]\w*)")
+    try:
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+        content = p.read_text()
+        lines = content.splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable TSX file %s in hook-bloat pass: %s", filepath, exc
+        )
+        return {"entries": entries, "total_hooks": total_hooks}
+
+    for m in hook_re.finditer(content):
+        hook_name = m.group(1)
+        total_hooks += 1
+        hook_start = content[: m.start()].count("\n")
+
+        brace_line = None
+        for k in range(hook_start, min(hook_start + 5, len(lines))):
+            if "{" in lines[k]:
+                brace_line = k
+                break
+        if brace_line is None:
+            continue
+
+        depth = 0
+        found_open = False
+        func_end = None
+        for j in range(brace_line, min(brace_line + MAX_FUNC_SCAN, len(lines))):
+            for _, ch, in_s in scan_code(lines[j]):
+                if in_s:
+                    continue
+                if ch == "{":
+                    depth += 1
+                    found_open = True
+                elif ch == "}":
+                    depth -= 1
+                    if found_open and depth == 0:
+                        func_end = j
+                        break
+            if func_end is not None:
+                break
+
+        if func_end is None:
+            continue
+
+        func_body = "\n".join(lines[brace_line : func_end + 1])
+        field_count = _count_return_fields(func_body)
+        if field_count is not None and field_count > 12:
+            entries.append(
+                {
+                    "file": filepath,
+                    "line": hook_start + 1,
+                    "hook": hook_name,
+                    "field_count": field_count,
+                }
+            )
+
+    return {"entries": entries, "total_hooks": total_hooks}
+
+
+def _hook_return_bloat_batch_worker(files: list[str]) -> dict:
+    entries: list[dict] = []
+    total_hooks = 0
+    for filepath in files:
+        result = _process_hook_return_bloat_file(filepath)
+        entries.extend(result.get("entries", []))
+        total_hooks += int(result.get("total_hooks", 0))
+    return {"entries": entries, "total_hooks": total_hooks}
 
 
 def _count_return_fields(func_body: str) -> int | None:
@@ -364,78 +431,96 @@ def detect_boolean_state_explosion(path: Path) -> tuple[list[dict], int]:
         r"const\s+\[(\w+),\s*(set\w+)\]\s*=\s*useState(?:<boolean>)?\s*\(\s*false\s*\)"
     )
 
-    for filepath in find_tsx_files(path):
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable TSX file %s in boolean-state pass: %s",
-                filepath,
-                exc,
-            )
+    files = find_tsx_files(path)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_boolean_state_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="react boolean state explosion",
+        bool_state_pattern=bool_state_re.pattern,
+    )
+    normalized_batches = (
+        batch_results if isinstance(batch_results, list) else [batch_results]
+    )
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
             continue
+        entries.extend(batch.get("entries", []))
+        total_components += int(batch.get("total_components", 0))
 
-        matches = list(bool_state_re.finditer(content))
-        if len(matches) < 3:
-            continue
+    return sorted(entries, key=lambda e: -e["count"]), total_components
 
-        total_components += 1
 
-        # Group boolean states by their setter name prefix pattern
-        # e.g., setShowExport, setShowDelete -> "setShow"
-        # e.g., isModalOpen, isDialogOpen -> "is...Open"
-        states = [
-            (m.group(1), m.group(2), content[: m.start()].count("\n") + 1)
-            for m in matches
-        ]
+def _process_boolean_state_file(filepath: str, bool_state_pattern: str) -> dict:
+    bool_state_re = re.compile(bool_state_pattern)
+    try:
+        p = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
+        content = p.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "Skipping unreadable TSX file %s in boolean-state pass: %s",
+            filepath,
+            exc,
+        )
+        return {"entries": [], "total_components": 0}
 
-        # Check for common prefix in setter names (at least 3 chars after "set")
-        prefixes: dict[str, list[tuple]] = {}
-        for state_name, setter, line in states:
-            # Extract prefix: "setShow" from "setShowExport", "setIs" from "setIsOpen"
-            # Look for where the varying part starts (first uppercase after "set" + camelCase)
-            bare = setter[3:]  # remove "set"
-            # Find split point — after the common prefix word
-            for k in range(2, len(bare)):
-                if bare[k].isupper():
-                    prefix = "set" + bare[:k]
-                    prefixes.setdefault(prefix, []).append((state_name, setter, line))
-                    break
+    matches = list(bool_state_re.finditer(content))
+    if len(matches) < 3:
+        return {"entries": [], "total_components": 0}
 
-        # Find groups with 3+ members
-        for prefix, group in prefixes.items():
-            if len(group) >= 3:
-                entries.append(
-                    {
-                        "file": filepath,
-                        "line": group[0][2],
-                        "count": len(group),
-                        "setters": [g[1] for g in group],
-                        "states": [g[0] for g in group],
-                        "prefix": prefix,
-                    }
-                )
-                break  # one issue per file
+    states = [
+        (m.group(1), m.group(2), content[: m.start()].count("\n") + 1)
+        for m in matches
+    ]
 
-        # Also flag if there are 4+ boolean useState regardless of prefix pattern
-        if not any(e["file"] == filepath for e in entries) and len(states) >= 4:
+    entries: list[dict] = []
+    prefixes: dict[str, list[tuple]] = {}
+    for state_name, setter, line in states:
+        bare = setter[3:]
+        for k in range(2, len(bare)):
+            if bare[k].isupper():
+                prefix = "set" + bare[:k]
+                prefixes.setdefault(prefix, []).append((state_name, setter, line))
+                break
+
+    for prefix, group in prefixes.items():
+        if len(group) >= 3:
             entries.append(
                 {
                     "file": filepath,
-                    "line": states[0][2],
-                    "count": len(states),
-                    "setters": [s[1] for s in states],
-                    "states": [s[0] for s in states],
-                    "prefix": "(mixed)",
+                    "line": group[0][2],
+                    "count": len(group),
+                    "setters": [g[1] for g in group],
+                    "states": [g[0] for g in group],
+                    "prefix": prefix,
                 }
             )
+            break
 
-    return sorted(entries, key=lambda e: -e["count"]), total_components
+    if not entries and len(states) >= 4:
+        entries.append(
+            {
+                "file": filepath,
+                "line": states[0][2],
+                "count": len(states),
+                "setters": [s[1] for s in states],
+                "states": [s[0] for s in states],
+                "prefix": "(mixed)",
+            }
+        )
+
+    return {"entries": entries, "total_components": 1}
+
+
+def _boolean_state_batch_worker(files: list[str], bool_state_pattern: str) -> dict:
+    entries: list[dict] = []
+    total_components = 0
+    for filepath in files:
+        result = _process_boolean_state_file(filepath, bool_state_pattern)
+        entries.extend(result.get("entries", []))
+        total_components += int(result.get("total_components", 0))
+    return {"entries": entries, "total_components": total_components}
 
 
 def cmd_react(args: argparse.Namespace) -> None:

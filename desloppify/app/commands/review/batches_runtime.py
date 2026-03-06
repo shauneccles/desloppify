@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import json
+import orjson
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -392,7 +393,10 @@ def write_run_summary(
         run_summary["interrupted"] = True
         if interruption_reason:
             run_summary["interruption_reason"] = interruption_reason
-    safe_write_text_fn(summary_path, json.dumps(run_summary, indent=2) + "\n")
+    safe_write_text_fn(
+        summary_path,
+        orjson.dumps(run_summary, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+    )
     print(colorize_fn(f"  Run summary: {summary_path}", "dim"))
     append_run_log_fn(f"run-summary {summary_path}")
 

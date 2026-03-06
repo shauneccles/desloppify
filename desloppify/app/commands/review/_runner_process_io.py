@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
+import orjson
 import subprocess  # nosec
 import threading
 import time
@@ -36,8 +36,8 @@ def _output_file_has_json_payload(output_file: Path) -> bool:
     if not output_file.exists():
         return False
     try:
-        payload = json.loads(output_file.read_text())
-    except (OSError, json.JSONDecodeError):
+        payload = orjson.loads(output_file.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
         return False
     return isinstance(payload, dict)
 
@@ -52,7 +52,7 @@ def _extract_payload_from_log(
     if not log_path.exists():
         return None
     try:
-        log_text = log_path.read_text()
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
 

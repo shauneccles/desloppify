@@ -52,8 +52,7 @@ Selection precedence inside `process_files_parallel`:
 
 1. `force_parallel=True/False` (explicit caller override)
 2. `DESLOPPIFY_PARALLEL` global env override
-3. Optional legacy env var (if `legacy_env_var` is provided)
-4. Auto-threshold (`file_count >= min_files`, default `50`)
+3. Auto-threshold (`file_count >= min_files`, default `50`)
 
 ## Defaults and constants
 
@@ -86,8 +85,6 @@ Per-call defaults in `process_files_parallel`:
 
 The call falls back to sequential execution if parallel submission/execution fails with:
 
-- `TypeError`
-- `AttributeError`
 - `pickle.PicklingError`
 - `concurrent.futures.process.BrokenProcessPool`
 

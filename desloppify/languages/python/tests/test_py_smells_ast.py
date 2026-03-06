@@ -165,8 +165,8 @@ class TestDeferredImport:
             tmp_path,
             """\
             def lazy():
-                import json
-                return json.dumps({})
+                import orjson
+                return orjson.dumps({})
         """,
         )
         entries, _ = detect_smells(path)

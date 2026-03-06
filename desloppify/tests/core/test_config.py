@@ -330,7 +330,7 @@ class TestMigrateFromStateFiles:
         state_dir = tmp_path
         state_dir.mkdir(exist_ok=True)
         state_data = {"version": 1, "issues": {}}
-        (state_dir / "state-python.json").write_text(json.dumps(state_data))
+        (state_dir / "state-python.json").write_text(orjson.dumps(state_data).decode("utf-8"))
         config_path = state_dir / "config.json"
 
         result = _migrate_from_state_files(config_path)

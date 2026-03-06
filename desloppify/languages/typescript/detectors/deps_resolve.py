@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -35,8 +35,8 @@ def parse_tsconfig_paths(project_root: Path) -> dict[str, str]:
         if not config_path.is_file():
             continue
         try:
-            data = json.loads(config_path.read_text(errors="replace"))
-        except (json.JSONDecodeError, OSError) as exc:
+            data = orjson.loads(config_path.read_text(errors="replace"))
+        except (orjson.JSONDecodeError, OSError) as exc:
             log_best_effort_failure(
                 logger,
                 f"parse TypeScript config file {config_path}",
@@ -51,8 +51,8 @@ def parse_tsconfig_paths(project_root: Path) -> dict[str, str]:
             parent_path = (config_path.parent / extends).resolve()
             if parent_path.is_file():
                 try:
-                    parent_data = json.loads(parent_path.read_text(errors="replace"))
-                except (json.JSONDecodeError, OSError):
+                    parent_data = orjson.loads(parent_path.read_text(errors="replace"))
+                except (orjson.JSONDecodeError, OSError):
                     return fallback
                 parent_result = extract_paths(parent_data, parent_path.parent)
                 if parent_result is not None:

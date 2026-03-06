@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import subprocess
 import sys
 from pathlib import Path
@@ -107,12 +107,15 @@ def _load_or_prepare_packet(
         if not packet_path.exists():
             raise PacketValidationError(f"packet not found: {packet_override}", exit_code=1)
         try:
-            packet = json.loads(packet_path.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
+            packet = orjson.loads(packet_path.read_bytes())
+        except (OSError, orjson.JSONDecodeError) as exc:
             raise PacketValidationError(f"reading packet: {exc}", exit_code=1) from exc
         blind_path = _blind_packet_path()
         blind_packet = build_blind_packet(packet)
-        safe_write_text(blind_path, json.dumps(blind_packet, indent=2) + "\n")
+        safe_write_text(
+            blind_path,
+            orjson.dumps(blind_packet, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+        )
         print(colorize(f"  Immutable packet: {packet_path}", "dim"))
         print(colorize(f"  Blind packet: {blind_path}", "dim"))
         return packet, packet_path, blind_path
@@ -295,8 +298,8 @@ def _validate_run_dir(run_dir: Path) -> tuple[dict, Path, str]:
     if not summary_path.exists():
         raise CommandError(f"no run_summary.json in {run_dir}", exit_code=1)
     try:
-        summary = json.loads(summary_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        summary = orjson.loads(summary_path.read_bytes())
+    except (OSError, orjson.JSONDecodeError) as exc:
         raise CommandError(f"Error reading run summary: {exc}", exit_code=1) from exc
 
     successful = summary.get("successful_batches", [])
@@ -309,8 +312,8 @@ def _validate_run_dir(run_dir: Path) -> tuple[dict, Path, str]:
         raise PacketValidationError(f"blind packet not found: {blind_packet_path}", exit_code=1)
 
     try:
-        packet = json.loads(Path(immutable_packet_path).read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        packet = orjson.loads(Path(immutable_packet_path).read_bytes())
+    except (OSError, orjson.JSONDecodeError) as exc:
         raise PacketValidationError(f"Error reading immutable packet: {exc}", exit_code=1) from exc
 
     summary["_packet"] = packet
@@ -390,7 +393,10 @@ def do_import_run(
 
     # -- write merged output --
     merged_path = run_dir / "holistic_issues_merged.json"
-    safe_write_text(merged_path, json.dumps(merged, indent=2) + "\n")
+    safe_write_text(
+        merged_path,
+        orjson.dumps(merged, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+    )
     print(colorize(f"  Merged output: {merged_path}", "bold"))
 
     # -- import with trusted source --

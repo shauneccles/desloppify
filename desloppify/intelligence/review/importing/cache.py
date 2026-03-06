@@ -57,17 +57,17 @@ def refresh_review_file_cache(
     reviewed_set = set(counts)
     if reviewed_files:
         reviewed_set.update(
-            str(file_path).strip()
-            for file_path in reviewed_files
-            if isinstance(file_path, str) and str(file_path).strip()
+            str(filepath).strip()
+            for filepath in reviewed_files
+            if isinstance(filepath, str) and str(filepath).strip()
         )
 
-    for file_path in reviewed_set:
+    for filepath in reviewed_set:
         upsert_review_cache_entry(
             file_cache,
-            file_path,
+            filepath,
             project_root=resolved_project_root,
             hash_file_fn=hash_file_fn,
             utc_now_fn=utc_now_fn,
-            issue_count=counts.get(file_path),
+            issue_count=counts.get(filepath),
         )

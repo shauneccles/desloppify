@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from pathlib import Path
 
@@ -31,10 +32,16 @@ def build_review_context_inner(
 ) -> ReviewContext:
     """Inner context builder (runs with file cache enabled)."""
     file_contents: dict[str, str] = {}
-    for filepath in files:
-        content = read_file_text_fn(abs_path_fn(filepath))
-        if content is not None:
-            file_contents[filepath] = content
+
+    def _read_file(filepath: str) -> tuple[str, str | None]:
+        return filepath, read_file_text_fn(abs_path_fn(filepath))
+
+    if files:
+        max_workers = min(32, len(files))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for filepath, content in executor.map(_read_file, files):
+                if content is not None:
+                    file_contents[filepath] = content
 
     prefix_counter: Counter = Counter()
     total_names = 0

@@ -32,6 +32,7 @@ from desloppify.base.discovery.source import find_ts_files
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.output.terminal import colorize, print_table
 from desloppify.base.discovery.paths import get_area
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.languages.typescript.detectors.contracts import DetectorResult
 
 # ── Pattern families ────────────────────────────────────────────
@@ -198,34 +199,21 @@ def _build_census(path: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str,
             name: re.compile(regex) for name, regex in family["patterns"].items()
         }
 
-    # Use parallel processing for CPU-intensive regex matching
-    # The framework doesn't natively support tuple returns, so we handle aggregation manually
-    try:
-        from desloppify.engine.parallel_utils import should_use_parallel, calculate_workers
-        import concurrent.futures
-        import os
-        
-        if should_use_parallel(len(files), min_files=100):
-            num_workers = calculate_workers()
-            chunk_size = max(1, len(files) // num_workers)
-            batches = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
-            
-            with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = [
-                    executor.submit(_patterns_batch_worker, batch, compiled)
-                    for batch in batches
-                ]
-                results = []
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        results.append(future.result())
-                    except Exception as exc:
-                        logger.warning("Pattern worker failed: %s", exc, exc_info=True)
-            
-            return _merge_census_and_evidence(results)
-        
-    except Exception as exc:
-        logger.debug("Parallel processing unavailable for patterns, using sequential: %s", exc)
+    # Use central parallel framework (includes auto-threshold + safe fallback).
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_patterns_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="typescript pattern census",
+        compiled=compiled,
+    )
+
+    # Sequential path returns a single tuple; parallel returns a list of tuples.
+    if isinstance(batch_results, tuple):
+        return _merge_census_and_evidence([batch_results])
+    if isinstance(batch_results, list) and batch_results:
+        return _merge_census_and_evidence(batch_results)
 
     # Fallback to sequential processing
     census: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))

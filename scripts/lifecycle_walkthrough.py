@@ -17,8 +17,8 @@ Press Enter to advance to the next lifecycle stage.
 
 from __future__ import annotations
 
-import json
 import os
+import orjson
 import sys
 import tempfile
 from pathlib import Path
@@ -131,8 +131,12 @@ def _save(state: dict, plan: dict, state_dir: Path) -> None:
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / "state-python.json"
     plan_path = state_dir / "plan.json"
-    state_path.write_text(json.dumps(state, indent=2, default=str))
-    plan_path.write_text(json.dumps(plan, indent=2, default=str))
+    state_path.write_text(
+        orjson.dumps(state, option=orjson.OPT_INDENT_2, default=str).decode("utf-8")
+    )
+    plan_path.write_text(
+        orjson.dumps(plan, option=orjson.OPT_INDENT_2, default=str).decode("utf-8")
+    )
 
 
 def _pause(tmpdir: Path, stage: str, description: str) -> None:

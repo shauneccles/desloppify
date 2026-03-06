@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -165,8 +165,8 @@ def _parse_and_validate_import(
     if not issues_path.exists():
         return None, [f"file not found: {import_file}"]
     try:
-        issues_data = json.loads(issues_path.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
+        issues_data = orjson.loads(issues_path.read_bytes())
+    except (orjson.JSONDecodeError, OSError) as exc:
         return None, [f"error reading issues: {exc}"]
 
     if isinstance(issues_data, list):

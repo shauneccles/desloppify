@@ -286,7 +286,7 @@ class TestLoadState:
         p = tmp_path / "state.json"
         # Legacy/minimal state payload with missing keys.
         p.write_text(
-            json.dumps({"version": 1, "issues": {"x": {"id": "x", "tier": 3}}})
+            orjson.dumps({"version": 1, "issues": {"x": {"id": "x", "tier": 3}}}).decode("utf-8")
         )
         s = load_state(p)
         assert s["scan_count"] == 0
@@ -379,7 +379,7 @@ class TestSaveState:
         st["issues"]["x"] = _make_raw_issue("x", status="oops")
         ensure_state_defaults(st)
         save_state(st, p)
-        loaded = json.loads(p.read_text())
+        loaded = orjson.loads(p.read_text())
         assert loaded["issues"]["x"]["status"] == "open"
 
 

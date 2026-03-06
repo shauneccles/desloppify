@@ -74,7 +74,7 @@ def test_import_untrusted_assessments_are_dropped_by_default(tmp_path):
         },
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(str(issues_path), colorize_fn=_colorize)
     assert parsed["assessments"] == {}
@@ -89,7 +89,7 @@ def test_import_manual_override_requires_attestation(tmp_path, capsys):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -107,7 +107,7 @@ def test_import_manual_override_allows_untrusted_assessments(tmp_path):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),
@@ -126,7 +126,7 @@ def test_import_manual_override_rejects_allow_partial_combo(tmp_path, capsys):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -146,7 +146,7 @@ def test_import_attested_external_requires_attest_phrases(tmp_path, capsys):
         "assessments": {"naming_quality": 100},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -167,7 +167,7 @@ def test_import_attested_external_rejects_untrusted_provenance(tmp_path, capsys)
         "assessments": {"naming_quality": 100},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -202,7 +202,7 @@ def test_import_attested_external_accepts_claude_blind_provenance(tmp_path):
         },
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),
@@ -236,7 +236,7 @@ def test_import_attested_external_rejects_non_claude_runner(tmp_path, capsys):
         },
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -259,7 +259,7 @@ def test_import_attested_external_rejects_allow_partial_combo(tmp_path, capsys):
         "assessments": {"naming_quality": 100},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -303,7 +303,7 @@ def test_import_external_trusted_provenance_still_defaults_to_issues_only(tmp_pa
         },
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(str(issues_path), colorize_fn=_colorize)
     assert parsed["assessments"] == {}
@@ -319,7 +319,7 @@ def test_import_trusted_internal_source_applies_assessments(tmp_path):
         "assessments": {"naming_quality": 100},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),
@@ -351,7 +351,7 @@ def test_import_hash_mismatch_falls_back_to_issues_only(tmp_path):
         },
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(str(issues_path), colorize_fn=_colorize)
     assert parsed["assessments"] == {}
@@ -379,7 +379,7 @@ def test_import_dimension_feedback_without_trusted_provenance_still_drops_assess
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(str(issues_path), colorize_fn=_colorize)
     assert parsed["assessments"] == {}
@@ -400,7 +400,7 @@ def test_import_rejects_issues_missing_schema_fields(tmp_path, capsys):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -420,7 +420,7 @@ def test_import_rejects_invalid_assessments_shape(tmp_path, capsys):
         "assessments": ["naming_quality", 95],
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(str(issues_path), colorize_fn=_colorize)
@@ -434,7 +434,7 @@ def test_import_rejects_invalid_reviewed_files_shape(tmp_path, capsys):
         "reviewed_files": "src/a.py",
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(str(issues_path), colorize_fn=_colorize)
@@ -456,7 +456,7 @@ def test_import_allow_partial_bypasses_schema_gate(tmp_path):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),
@@ -474,7 +474,7 @@ def test_import_accepts_perfect_assessment_without_feedback(tmp_path):
         "assessments": {"naming_quality": 100},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(str(issues_path), colorize_fn=_colorize)
     assert parsed["assessments"] == {}
@@ -495,7 +495,7 @@ def test_import_trusted_internal_accepts_dimension_notes_feedback(tmp_path):
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),
@@ -514,7 +514,7 @@ def test_import_trusted_internal_rejects_sub100_without_feedback(tmp_path, capsy
         "assessments": {"naming_quality": 95},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -541,7 +541,7 @@ def test_import_trusted_internal_rejects_low_score_without_issue(tmp_path, capsy
         "assessments": {"naming_quality": 80},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     with pytest.raises(ImportPayloadLoadError) as exc:
         load_import_issues_data(
@@ -570,7 +570,7 @@ def test_import_trusted_internal_accepts_low_score_with_issue(tmp_path):
         "assessments": {"naming_quality": 80},
     }
     issues_path = tmp_path / "issues.json"
-    issues_path.write_text(json.dumps(payload))
+    issues_path.write_text(orjson.dumps(payload).decode("utf-8"))
 
     parsed = load_import_issues_data(
         str(issues_path),

@@ -69,7 +69,7 @@ def test_write_query_truncates_oversized_payload(tmp_path, monkeypatch, capsys):
 
     result = query_mod.write_query(payload, query_file=query_path)
 
-    saved = json.loads(query_path.read_text())
+    saved = orjson.loads(query_path.read_text())
     stderr = capsys.readouterr().err
 
     assert result.ok is True

@@ -16,7 +16,7 @@ class OrphanedDetectionOptions:
 
     extra_entry_patterns: list[str] | None = None
     extra_barrel_names: set[str] | None = None
-    dynamic_import_finder: Callable[[Path, list[str]], set[str]] | None = None
+    dynamic_import_finder: Callable[..., set[str]] | None = None
     alias_resolver: Callable[[str], str] | None = None
 
 
@@ -24,11 +24,28 @@ def _is_dynamically_imported(
     filepath: str,
     dynamic_targets: set[str],
     alias_resolver: Callable[[str], str] | None = None,
+    dynamic_target_index: set[str] | None = None,
 ) -> bool:
     """Check if a file is referenced by any dynamic/side-effect import."""
     r = rel(filepath)
     stem = Path(filepath).stem
     name_no_ext = str(Path(r).with_suffix(""))
+
+    lookup = dynamic_target_index or _build_dynamic_target_index(
+        dynamic_targets,
+        alias_resolver=alias_resolver,
+    )
+
+    basename = Path(filepath).name
+    probe_tokens = {
+        name_no_ext,
+        r,
+        stem,
+        basename,
+    }
+    for token in probe_tokens:
+        if token in lookup:
+            return True
 
     for target in dynamic_targets:
         resolved = alias_resolver(target) if alias_resolver else target
@@ -45,6 +62,24 @@ def _is_dynamically_imported(
     return False
 
 
+def _build_dynamic_target_index(
+    dynamic_targets: set[str],
+    *,
+    alias_resolver: Callable[[str], str] | None = None,
+) -> set[str]:
+    """Precompute normalized dynamic-target tokens for fast orphan checks."""
+    index: set[str] = set()
+    for target in dynamic_targets:
+        resolved = alias_resolver(target) if alias_resolver else target
+        normalized = resolved.lstrip("./")
+        if not normalized:
+            continue
+        index.add(normalized)
+        index.add(Path(normalized).name)
+        index.add(Path(normalized).stem)
+    return index
+
+
 def detect_orphaned_files(
     path: Path,
     graph: dict,
@@ -58,9 +93,18 @@ def detect_orphaned_files(
     dynamic_import_finder = resolved_options.dynamic_import_finder
     alias_resolver = resolved_options.alias_resolver
 
-    dynamic_targets = (
-        dynamic_import_finder(path, extensions) if dynamic_import_finder else set()
-    )
+    if dynamic_import_finder:
+        candidate_files = set(graph.keys())
+        try:
+            dynamic_targets = dynamic_import_finder(path, extensions, candidate_files)
+        except TypeError:
+            dynamic_targets = dynamic_import_finder(path, extensions)
+    else:
+        dynamic_targets = set()
+    dynamic_target_index = _build_dynamic_target_index(
+        dynamic_targets,
+        alias_resolver=alias_resolver,
+    ) if dynamic_targets else set()
 
     total_files = len(graph)
     entries = []
@@ -78,7 +122,10 @@ def detect_orphaned_files(
             continue
 
         if dynamic_targets and _is_dynamically_imported(
-            filepath, dynamic_targets, alias_resolver
+            filepath,
+            dynamic_targets,
+            alias_resolver,
+            dynamic_target_index=dynamic_target_index,
         ):
             continue
 

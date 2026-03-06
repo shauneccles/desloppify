@@ -8,6 +8,23 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+from desloppify.engine.parallel_utils import process_files_parallel
+
+
+_COVERAGE_ANALYSIS_PARALLEL_MIN_FILES = 120
+
+
+def _identity_strip_comments(text: str) -> str:
+    return text
+
+
+def _default_placeholder_classifier(
+    _content: str, *, assertions: int, test_functions: int
+) -> bool:
+    _ = assertions
+    _ = test_functions
+    return False
+
 
 def transitive_coverage_core(
     directly_tested: set[str],
@@ -53,21 +70,130 @@ def analyze_test_quality_core(
 
         test_func_re = re.compile(r"$^")
     if not callable(strip_comments):
-
-        def strip_comments(text: str) -> str:
-            return text
+        strip_comments = _identity_strip_comments
     if not callable(placeholder_classifier):
+        placeholder_classifier = _default_placeholder_classifier
 
-        def placeholder_classifier(
-            _content: str, *, assertions: int, test_functions: int
-        ) -> bool:
-            _ = assertions
-            _ = test_functions
-            return False
+    batch_maps = process_files_parallel(
+        files=list(test_files),
+        worker_func=_analyze_test_quality_batch_worker,
+        mode="dict_merge",
+        min_files=_COVERAGE_ANALYSIS_PARALLEL_MIN_FILES,
+        task_name="coverage quality analysis",
+        max_retries=1,
+        read_coverage_file_fn=read_coverage_file_fn,
+        strip_comments=strip_comments,
+        assert_pats=assert_pats,
+        mock_pats=mock_pats,
+        snapshot_pats=snapshot_pats,
+        test_func_re=test_func_re,
+        placeholder_classifier=placeholder_classifier,
+        logger_name=logger.name,
+    )
+    return dict(batch_maps)
 
-    quality_map: dict[str, dict] = {}
 
-    for test_path in test_files:
+def _build_prod_by_module(
+    production_files: set[str],
+    *,
+    project_root: str,
+) -> dict[str, str]:
+    """Build module lookup map for production files."""
+    root_str = project_root + os.sep
+    return dict(process_files_parallel(
+        files=list(production_files),
+        worker_func=_build_prod_by_module_batch_worker,
+        mode="dict_merge",
+        min_files=_COVERAGE_ANALYSIS_PARALLEL_MIN_FILES,
+        task_name="coverage production module index",
+        max_retries=1,
+        root_str=root_str,
+    ))
+
+
+def get_test_files_for_prod_core(
+    prod_file: str,
+    test_files: set[str],
+    graph: dict,
+    lang_name: str,
+    parsed_imports_by_test: dict[str, set[str]] | None,
+    *,
+    parse_test_imports_fn: Callable[[str, set[str], dict[str, str], str], set[str]],
+    map_test_to_source_fn: Callable[[str, set[str], str], str | None],
+    project_root: str,
+) -> list[str]:
+    """Find which test files exercise a given production file."""
+    parsed_imports_by_test = parsed_imports_by_test or {}
+    root_str = project_root + os.sep
+    rel_prod = prod_file[len(root_str) :] if prod_file.startswith(root_str) else prod_file
+    module_name = rel_prod.replace("/", ".").replace("\\", ".")
+    if "." in module_name:
+        module_name = module_name.rsplit(".", 1)[0]
+    prod_by_module: dict[str, str] = {module_name: prod_file}
+    parts = module_name.split(".")
+    if parts:
+        prod_by_module[parts[-1]] = prod_file
+
+    result_batches = process_files_parallel(
+        files=list(test_files),
+        worker_func=_get_test_files_for_prod_batch_worker,
+        mode="extend",
+        min_files=_COVERAGE_ANALYSIS_PARALLEL_MIN_FILES,
+        task_name="coverage related tests lookup",
+        max_retries=1,
+        prod_file=prod_file,
+        graph=graph,
+        parsed_imports_by_test=parsed_imports_by_test,
+        parse_test_imports_fn=parse_test_imports_fn,
+        prod_by_module=prod_by_module,
+        lang_name=lang_name,
+        map_test_to_source_fn=map_test_to_source_fn,
+    )
+    return list(result_batches)
+
+
+def build_test_import_index_core(
+    test_files: set[str],
+    production_files: set[str],
+    lang_name: str,
+    *,
+    parse_test_imports_fn: Callable[[str, set[str], dict[str, str], str], set[str]],
+    project_root: str,
+) -> dict[str, set[str]]:
+    """Parse test import sources once, producing a test->production import index."""
+    prod_by_module = _build_prod_by_module(
+        production_files,
+        project_root=project_root,
+    )
+    return dict(process_files_parallel(
+        files=list(test_files),
+        worker_func=_build_test_import_index_batch_worker,
+        mode="dict_merge",
+        min_files=_COVERAGE_ANALYSIS_PARALLEL_MIN_FILES,
+        task_name="coverage test import index",
+        max_retries=1,
+        production_files=production_files,
+        prod_by_module=prod_by_module,
+        parse_test_imports_fn=parse_test_imports_fn,
+        lang_name=lang_name,
+    ))
+
+
+def _analyze_test_quality_batch_worker(
+    files: list[str],
+    *,
+    read_coverage_file_fn: Callable[..., Any],
+    strip_comments,
+    assert_pats,
+    mock_pats,
+    snapshot_pats,
+    test_func_re,
+    placeholder_classifier,
+    logger_name: str,
+) -> dict[str, dict]:
+    logger = logging.getLogger(logger_name)
+    result: dict[str, dict] = {}
+    for test_path in files:
         read_result = read_coverage_file_fn(
             test_path,
             context="coverage_quality_analysis",
@@ -121,7 +247,7 @@ def analyze_test_quality_core(
         else:
             quality = "adequate"
 
-        quality_map[test_path] = {
+        result[test_path] = {
             "assertions": assertions,
             "mocks": mocks,
             "test_functions": test_functions,
@@ -129,19 +255,16 @@ def analyze_test_quality_core(
             "placeholder": is_placeholder,
             "quality": quality,
         }
+    return result
 
-    return quality_map
 
-
-def _build_prod_by_module(
-    production_files: set[str],
+def _build_prod_by_module_batch_worker(
+    files: list[str],
     *,
-    project_root: str,
+    root_str: str,
 ) -> dict[str, str]:
-    """Build module lookup map for production files."""
-    root_str = project_root + os.sep
     prod_by_module: dict[str, str] = {}
-    for prod_file in production_files:
+    for prod_file in files:
         rel_path = (
             prod_file[len(root_str) :]
             if prod_file.startswith(root_str)
@@ -159,31 +282,19 @@ def _build_prod_by_module(
     return prod_by_module
 
 
-def get_test_files_for_prod_core(
-    prod_file: str,
-    test_files: set[str],
-    graph: dict,
-    lang_name: str,
-    parsed_imports_by_test: dict[str, set[str]] | None,
+def _get_test_files_for_prod_batch_worker(
+    files: list[str],
     *,
-    parse_test_imports_fn: Callable[[str, set[str], dict[str, str], str], set[str]],
-    map_test_to_source_fn: Callable[[str, set[str], str], str | None],
-    project_root: str,
+    prod_file: str,
+    graph: dict,
+    parsed_imports_by_test: dict[str, set[str]],
+    parse_test_imports_fn,
+    prod_by_module: dict[str, str],
+    lang_name: str,
+    map_test_to_source_fn,
 ) -> list[str]:
-    """Find which test files exercise a given production file."""
-    parsed_imports_by_test = parsed_imports_by_test or {}
-    root_str = project_root + os.sep
-    rel_prod = prod_file[len(root_str) :] if prod_file.startswith(root_str) else prod_file
-    module_name = rel_prod.replace("/", ".").replace("\\", ".")
-    if "." in module_name:
-        module_name = module_name.rsplit(".", 1)[0]
-    prod_by_module: dict[str, str] = {module_name: prod_file}
-    parts = module_name.split(".")
-    if parts:
-        prod_by_module[parts[-1]] = prod_file
-
     result: list[str] = []
-    for test_path in test_files:
+    for test_path in files:
         entry = graph.get(test_path)
         if entry and prod_file in entry.get("imports", set()):
             result.append(test_path)
@@ -204,28 +315,23 @@ def get_test_files_for_prod_core(
     return result
 
 
-def build_test_import_index_core(
-    test_files: set[str],
-    production_files: set[str],
-    lang_name: str,
+def _build_test_import_index_batch_worker(
+    files: list[str],
     *,
-    parse_test_imports_fn: Callable[[str, set[str], dict[str, str], str], set[str]],
-    project_root: str,
+    production_files: set[str],
+    prod_by_module: dict[str, str],
+    parse_test_imports_fn,
+    lang_name: str,
 ) -> dict[str, set[str]]:
-    """Parse test import sources once, producing a test->production import index."""
-    prod_by_module = _build_prod_by_module(
-        production_files,
-        project_root=project_root,
-    )
-    index: dict[str, set[str]] = {}
-    for test_path in test_files:
-        index[test_path] = parse_test_imports_fn(
+    result: dict[str, set[str]] = {}
+    for test_path in files:
+        result[test_path] = parse_test_imports_fn(
             test_path,
             production_files,
             prod_by_module,
             lang_name,
         )
-    return index
+    return result
 
 
 __all__ = [

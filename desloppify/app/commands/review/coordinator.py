@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import json
+import orjson
+
 import subprocess  # nosec
 from collections.abc import Mapping
 from hashlib import sha256
@@ -27,14 +28,12 @@ from .runtime_paths import (
 
 
 def _stable_json_sha256(payload: Any) -> str:
-    serialized = json.dumps(
+    serialized = orjson.dumps(
         payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
+        option=orjson.OPT_SORT_KEYS | orjson.OPT_NON_STR_KEYS,
         default=str,
     )
-    return sha256(serialized.encode("utf-8")).hexdigest()
+    return sha256(serialized).hexdigest()
 
 
 def _coerce_scan_count(state: Mapping[str, Any]) -> int:

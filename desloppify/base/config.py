@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import copy
-import orjson
 import logging
+import orjson
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 MIN_TARGET_STRICT_SCORE = 0
 MAX_TARGET_STRICT_SCORE = 100
 DEFAULT_TARGET_STRICT_SCORE: float = 95.0
+
+
+def _dump_json_pretty(payload: object) -> str:
+    return orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -136,8 +140,8 @@ def _coerce_target_strict_score(value: object) -> tuple[int, bool]:
 def _load_config_payload(path: Path) -> dict[str, Any]:
     if path.exists():
         try:
-            payload = json.loads(path.read_text())
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            payload = orjson.loads(path.read_bytes())
+        except (orjson.JSONDecodeError, OSError):
             return {}
         return payload if isinstance(payload, dict) else {}
     # First run — try migrating from state files
@@ -197,7 +201,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 def save_config(config: dict, path: Path | None = None) -> None:
     """Save config to disk atomically."""
     p = path or _default_config_file()
-    safe_write_text(p, json.dumps(config, indent=2) + "\n")
+    safe_write_text(p, _dump_json_pretty(config) + "\n")
 
 
 def add_ignore_pattern(config: dict, pattern: str) -> None:
@@ -338,8 +342,8 @@ def _merge_config_value(config: dict, key: str, value: object) -> None:
 
 def _load_state_file_payload(path: Path) -> dict | None:
     try:
-        payload = json.loads(path.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        payload = orjson.loads(path.read_bytes())
+    except (orjson.JSONDecodeError, OSError) as exc:
         logger.debug("Skipping unreadable state file %s: %s", path, exc)
         return None
     if isinstance(payload, dict):
@@ -359,7 +363,7 @@ def _strip_config_from_state_file(path: Path, state_data: dict) -> None:
         return
     del state_data["config"]
     try:
-        safe_write_text(path, json.dumps(state_data, indent=2) + "\n")
+        safe_write_text(path, _dump_json_pretty(state_data) + "\n")
     except OSError as exc:
         log_best_effort_failure(
             logger,

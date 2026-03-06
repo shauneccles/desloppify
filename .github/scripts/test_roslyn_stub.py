@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
-import json
+import orjson
 import sys
 from pathlib import Path
 
@@ -36,5 +36,5 @@ def test_main_emits_roslyn_like_payload(capsys, monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["roslyn_stub.py", str(tmp_path)])
 
     assert stub.main() == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = orjson.loads(capsys.readouterr().out)
     assert payload["files"] == [{"file": "A.cs", "imports": ["B.cs", "C.cs"]}]

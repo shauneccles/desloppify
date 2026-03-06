@@ -7,6 +7,7 @@ import re
 
 from desloppify.base.discovery.source import read_file_text as _read_file_text
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 
 
 def _grep_files_worker(
@@ -14,7 +15,7 @@ def _grep_files_worker(
 ) -> list[tuple[str, int, str]]:
     """Worker function to search files for a regex pattern."""
     results: list[tuple[str, int, str]] = []
-    for filepath in file_list:
+    for filepath in files:
         abs_path = filepath if os.path.isabs(filepath) else str(get_project_root() / filepath)
         content = _read_file_text(abs_path)
         if content is None:
@@ -49,7 +50,7 @@ def _grep_files_containing_worker(
     """Worker function to find which files contain which names."""
     name_to_files: dict[str, set[str]] = {}
     for filepath in files:
-        abs_path = filepath if os.path.isabs(filepath) else str(_get_project_root() / filepath)
+        abs_path = filepath if os.path.isabs(filepath) else str(get_project_root() / filepath)
         content = _read_file_text(abs_path)
         if content is None:
             continue
@@ -73,8 +74,23 @@ def grep_files_containing(
     else:
         combined = re.compile("|".join(re.escape(n) for n in names_by_length))
 
-    name_to_files: dict[str, set[str]] = {}
-    for filepath in file_list:
+    result = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_files_containing_worker,
+        mode="dict_merge",
+        min_files=50,
+        task_name="core grep containing search",
+        combined=combined,
+        names=names,
+    )
+
+    return result
+
+
+def _grep_count_files_worker(files: list[str], pat: re.Pattern, **kwargs) -> list[str]:
+    """Worker function to find files containing a pattern."""
+    matching: list[str] = []
+    for filepath in files:
         abs_path = filepath if os.path.isabs(filepath) else str(get_project_root() / filepath)
         content = _read_file_text(abs_path)
         if content is None:
@@ -92,14 +108,14 @@ def grep_count_files(
         pat = re.compile(r"\b" + re.escape(name) + r"\b")
     else:
         pat = re.compile(re.escape(name))
-    matching: list[str] = []
-    for filepath in file_list:
-        abs_path = filepath if os.path.isabs(filepath) else str(get_project_root() / filepath)
-        content = _read_file_text(abs_path)
-        if content is None:
-            continue
-        if pat.search(content):
-            matching.append(filepath)
+    matching = process_files_parallel(
+        files=file_list,
+        worker_func=_grep_count_files_worker,
+        mode="extend",
+        min_files=50,
+        task_name="core grep count search",
+        pat=pat,
+    )
     return matching
 
 

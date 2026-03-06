@@ -33,12 +33,21 @@ def python_scan_coverage_prerequisites() -> list[DetectorCoverageStatus]:
 
 
 def detect_python_security(files, zone_map) -> LangSecurityResult:
+    if not files:
+        return LangSecurityResult(entries=[], files_scanned=0)
+
     scan_root = scan_root_from_files(files)
     if scan_root is None:
         return LangSecurityResult(entries=[], files_scanned=0)
 
     exclude_dirs = collect_exclude_dirs(scan_root)
-    result = detect_with_bandit(scan_root, zone_map, exclude_dirs=exclude_dirs)
+
+    result = detect_with_bandit(
+        path=scan_root,
+        files=list(files),
+        zone_map=zone_map,
+        exclude_dirs=exclude_dirs,
+    )
     coverage = result.status.coverage()
     return LangSecurityResult(
         entries=result.entries,

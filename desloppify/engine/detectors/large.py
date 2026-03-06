@@ -5,6 +5,7 @@ from pathlib import Path
 
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.discovery.file_paths import count_lines, resolve_scan_file
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +41,15 @@ def detect_large_files(
 ) -> tuple[list[dict], int]:
     """Find files exceeding a line count threshold."""
     files = file_finder(path)
-    entries = []
-    for filepath in files:
-        try:
-            p = resolve_scan_file(filepath, scan_root=path)
-            loc = count_lines(p)
-            if loc > threshold:
-                entries.append({"file": filepath, "loc": loc})
-        except (OSError, UnicodeDecodeError) as exc:
-            log_best_effort_failure(
-                logger,
-                f"read large-file detector candidate {filepath}",
-                exc,
-            )
-            continue
+    entries = process_files_parallel(
+        files=files,
+        worker_func=_large_file_worker,
+        mode="extend",
+        min_files=100,
+        task_name="large file detection",
+        path=path,
+        threshold=threshold,
+    )
+    if not isinstance(entries, list):
+        entries = [entries]
     return sorted(entries, key=lambda e: -e["loc"]), len(files)

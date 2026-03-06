@@ -86,3 +86,46 @@ def test_detect_with_bandit_uses_absolute_scan_path(monkeypatch):
     cmd = captured["cmd"]
     assert isinstance(cmd, list)
     assert Path(cmd[-1]).is_absolute()
+
+
+def test_detect_with_bandit_files_parallel_uses_framework(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def _fake_parallel(*, files, worker_func, **kwargs):
+        captured["files"] = files
+        captured["worker_func"] = worker_func
+        captured["kwargs"] = kwargs
+        return [
+            {
+                "entries": [{"name": "security::B001::x.py::1"}],
+                "files_scanned": 2,
+                "status": "ok",
+                "detail": "",
+            }
+        ]
+
+    monkeypatch.setattr(adapter_mod, "process_files_parallel", _fake_parallel)
+
+    result = adapter_mod.detect_with_bandit(
+        files=["a.py", "b.py"],
+        zone_map=None,
+        parallel=True,
+    )
+
+    assert captured["files"] == ["a.py", "b.py"]
+    assert result.status.state == "ok"
+    assert result.files_scanned == 2
+    assert len(result.entries) == 1
+
+
+def test_detect_with_bandit_files_parallel_incomplete_returns_error(monkeypatch):
+    monkeypatch.setattr(adapter_mod, "process_files_parallel", lambda **_: [])
+
+    result = adapter_mod.detect_with_bandit(
+        files=["a.py"],
+        zone_map=None,
+        parallel=True,
+    )
+
+    assert result.status.state == "error"
+    assert result.entries == []

@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from desloppify.base.discovery.file_paths import rel
+from desloppify.engine.parallel_utils import process_files_parallel
 
 
 def _classify_convention(filename: str) -> str | None:
@@ -39,22 +40,24 @@ def detect_naming_inconsistencies(
     all_skip_dirs = skip_dirs or set()
     files = file_finder(path)
 
-    dir_files: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-
-    for filepath in files:
-        p = Path(filepath)
-        dirname = str(p.parent)
-        rdir = rel(dirname)
-        filename = p.name
-
-        if filename in all_skip_names:
-            continue
-        if rdir in all_skip_dirs:
-            continue
-
-        convention = _classify_convention(filename)
-        if convention:
-            dir_files[dirname][convention].append(filename)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_naming_batch_worker,
+        mode="dict_merge",
+        min_files=100,
+        task_name="naming inconsistency detection",
+        skip_names=all_skip_names,
+        skip_dirs=all_skip_dirs,
+    )
+    dir_files: dict[str, dict[str, list[str]]] = {}
+    if isinstance(batch_results, dict):
+        for dirname, conventions in batch_results.items():
+            if isinstance(conventions, dict):
+                dir_files[dirname] = {
+                    convention: list(files_by_conv)
+                    for convention, files_by_conv in conventions.items()
+                    if isinstance(files_by_conv, list)
+                }
 
     entries = []
     for dirname, conventions in dir_files.items():
@@ -84,3 +87,31 @@ def detect_naming_inconsistencies(
             )
 
     return sorted(entries, key=lambda e: -e["minority_count"]), len(dir_files)
+
+
+def _naming_batch_worker(
+    files: list[str],
+    skip_names: set[str],
+    skip_dirs: set[str],
+) -> dict[str, dict[str, list[str]]]:
+    dir_files: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+
+    for filepath in files:
+        p = Path(filepath)
+        dirname = str(p.parent)
+        rdir = rel(dirname)
+        filename = p.name
+
+        if filename in skip_names:
+            continue
+        if rdir in skip_dirs:
+            continue
+
+        convention = _classify_convention(filename)
+        if convention:
+            dir_files[dirname][convention].append(filename)
+
+    return {
+        dirname: {conv: sorted(names) for conv, names in conventions.items()}
+        for dirname, conventions in dir_files.items()
+    }

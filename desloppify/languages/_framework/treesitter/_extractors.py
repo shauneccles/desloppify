@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from desloppify.engine.detectors.base import ClassInfo, FunctionInfo
+from desloppify.engine.parallel_utils import process_files_parallel
 
 from ._cache import _PARSE_CACHE
 from ._normalize import normalize_body
@@ -126,12 +127,52 @@ def ts_extract_functions(
     file_list: list[str],
 ) -> list[FunctionInfo]:
     """Extract functions from all files using tree-sitter."""
-    parser, language = _get_parser(spec.grammar)
-    query = _make_query(language, spec.function_query)
+    results = process_files_parallel(
+        files=file_list,
+        worker_func=_extract_functions_batch,
+        mode="extend",
+        min_files=100,
+        task_name=f"tree-sitter {spec.grammar} function extraction",
+        grammar=spec.grammar,
+        function_query=spec.function_query,
+        spec=spec,
+    )
+    return results if isinstance(results, list) else [results]
+
+
+def ts_extract_classes(
+    path: Path,
+    spec: TreeSitterLangSpec,
+    file_list: list[str],
+) -> list[ClassInfo]:
+    """Extract classes/structs from all files using tree-sitter."""
+    if not spec.class_query:
+        return []
+
+    results = process_files_parallel(
+        files=file_list,
+        worker_func=_extract_classes_batch,
+        mode="extend",
+        min_files=100,
+        task_name=f"tree-sitter {spec.grammar} class extraction",
+        grammar=spec.grammar,
+        class_query=spec.class_query,
+    )
+    return results if isinstance(results, list) else [results]
+
+
+def _extract_functions_batch(
+    files: list[str],
+    grammar: str,
+    function_query: str,
+    spec: TreeSitterLangSpec,
+) -> list[FunctionInfo]:
+    parser, language = _get_parser(grammar)
+    query = _make_query(language, function_query)
     functions: list[FunctionInfo] = []
 
-    for filepath in file_list:
-        cached = _PARSE_CACHE.get_or_parse(filepath, parser, spec.grammar)
+    for filepath in files:
+        cached = _PARSE_CACHE.get_or_parse(filepath, parser, grammar)
         if cached is None:
             continue
         source, tree = cached
@@ -144,23 +185,18 @@ def ts_extract_functions(
                 continue
 
             name_text = _node_text(name_node)
-
-            line = func_node.start_point[0] + 1  # 1-indexed
+            line = func_node.start_point[0] + 1
             end_line = func_node.end_point[0] + 1
             loc = end_line - line + 1
-
             body = source[func_node.start_byte : func_node.end_byte]
             body_text = body.decode("utf-8", errors="replace")
-
             normalized = normalize_body(source, func_node, spec)
 
-            # Skip tiny functions (< 3 meaningful lines).
             if len(normalized.splitlines()) < 3:
                 continue
 
             body_hash = hashlib.md5(normalized.encode("utf-8")).hexdigest()
             params = _extract_param_names(func_node)
-
             functions.append(
                 FunctionInfo(
                     name=name_text,
@@ -178,24 +214,20 @@ def ts_extract_functions(
     return functions
 
 
-def ts_extract_classes(
-    path: Path,
-    spec: TreeSitterLangSpec,
-    file_list: list[str],
+def _extract_classes_batch(
+    files: list[str],
+    grammar: str,
+    class_query: str,
 ) -> list[ClassInfo]:
-    """Extract classes/structs from all files using tree-sitter."""
-    if not spec.class_query:
-        return []
-
-    parser, language = _get_parser(spec.grammar)
-    query = _make_query(language, spec.class_query)
+    parser, language = _get_parser(grammar)
+    query = _make_query(language, class_query)
     classes: list[ClassInfo] = []
 
-    for filepath in file_list:
-        cached = _PARSE_CACHE.get_or_parse(filepath, parser, spec.grammar)
+    for filepath in files:
+        cached = _PARSE_CACHE.get_or_parse(filepath, parser, grammar)
         if cached is None:
             continue
-        source, tree = cached
+        _source, tree = cached
         matches = _run_query(query, tree.root_node)
 
         for _pattern_idx, captures in matches:
@@ -204,18 +236,12 @@ def ts_extract_classes(
             if not class_node or not name_node:
                 continue
 
-            name_text = _node_text(name_node)
-
-            line = class_node.start_point[0] + 1
-            end_line = class_node.end_point[0] + 1
-            loc = end_line - line + 1
-
             classes.append(
                 ClassInfo(
-                    name=name_text,
+                    name=_node_text(name_node),
                     file=filepath,
-                    line=line,
-                    loc=loc,
+                    line=class_node.start_point[0] + 1,
+                    loc=(class_node.end_point[0] + 1) - (class_node.start_point[0] + 1) + 1,
                 )
             )
 

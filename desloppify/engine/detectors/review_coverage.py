@@ -7,7 +7,6 @@ which production files have been reviewed, are stale, or have changed since revi
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +21,7 @@ from desloppify.base.discovery.file_paths import (
 )
 
 from desloppify.base.discovery.source import read_file_text
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.engine.hook_registry import get_lang_hook
 
 _LOW_VALUE_NAMES = re.compile(
@@ -30,15 +30,8 @@ _LOW_VALUE_NAMES = re.compile(
 # Keep this expression distinct from other modules to avoid duplicate-constant
 # drift while preserving the shared review threshold value.
 MIN_REVIEW_LOC = 10 * 2
-_REVIEW_COVERAGE_PARALLEL_MIN_FILES = 600
-ReviewCandidate: TypeAlias = tuple[str, str, int]
-
-
-def _should_parallelize_review_coverage(candidate_count: int) -> bool:
-    env = os.getenv("DESLOPPIFY_REVIEW_COVERAGE_PARALLEL")
-    if env is not None:
-        return env.strip().lower() in {"1", "true", "yes", "on"}
-    return candidate_count >= _REVIEW_COVERAGE_PARALLEL_MIN_FILES
+_REVIEW_COVERAGE_MIN_FILES = 200
+ReviewCandidate: TypeAlias = tuple[str, str, int, str]
 
 
 def _hash_file(filepath: str) -> str:
@@ -151,29 +144,27 @@ def detect_review_coverage(
     now = datetime.now(UTC)
     entries: list[dict] = []
     candidates: list[ReviewCandidate] = []
-    for filepath in files:
-        rpath = rel(filepath)
+    low_value_pattern_text = low_value_pattern.pattern if isinstance(low_value_pattern, re.Pattern) else None
+    low_value_pattern_flags = low_value_pattern.flags if isinstance(low_value_pattern, re.Pattern) else 0
 
-        # Skip non-production files
-        if zone_map is not None:
-            zone = zone_map.get(filepath)
-            if zone.value in ("test", "generated", "vendor", "config", "script"):
-                continue
+    candidate_batches = process_files_parallel(
+        files=files,
+        worker_func=_review_candidate_batch_worker,
+        mode="extend",
+        min_files=_REVIEW_COVERAGE_MIN_FILES,
+        task_name="review coverage candidate scan",
+        zone_map=zone_map,
+        lang_name=lang_name,
+        low_value_pattern_text=low_value_pattern_text,
+        low_value_pattern_flags=low_value_pattern_flags,
+    )
+    if isinstance(candidate_batches, list):
+        candidates.extend(candidate_batches)
+    elif isinstance(candidate_batches, tuple):
+        candidates.append(candidate_batches)
 
-        # Skip low-value files (language-specific + generic patterns)
-        if _is_low_value_file(rpath, lang_name, low_value_pattern=low_value_pattern):
-            continue
-
-        # Skip files below minimum LOC
-        abs_path = resolve_path(filepath)
-        content = read_file_text(abs_path)
-        if content is None:
-            continue
-        loc = len(content.splitlines())
-        if loc < MIN_REVIEW_LOC:
-            continue
-
-        candidates.append((abs_path, rpath, loc))
+    file_order = {filepath: idx for idx, filepath in enumerate(files)}
+    candidates.sort(key=lambda item: file_order.get(item[3], 0))
 
     potential = len(candidates)
     holistic_fresh = False
@@ -196,15 +187,96 @@ def detect_review_coverage(
                 == 0
             )
 
-    for abs_path, rpath, loc in candidates:
+    candidate_map = {
+        source_filepath: (abs_path, rpath, loc)
+        for abs_path, rpath, loc, source_filepath in candidates
+    }
+    status_batches = process_files_parallel(
+        files=list(candidate_map.keys()),
+        worker_func=_review_status_batch_worker,
+        mode="extend",
+        min_files=_REVIEW_COVERAGE_MIN_FILES,
+        task_name="review coverage status scan",
+        candidate_map=candidate_map,
+        review_cache=review_cache,
+        now_iso=now.isoformat(),
+        max_age_days=max_age_days,
+        holistic_fresh=holistic_fresh,
+    )
+    if isinstance(status_batches, list):
+        entries.extend(status_batches)
+    elif isinstance(status_batches, dict):
+        entries.append(status_batches)
+    entries.sort(key=lambda entry: (str(entry.get("file", "")), str(entry.get("name", ""))))
+
+    return entries, potential
+
+
+def _review_candidate_batch_worker(
+    files: list[str],
+    zone_map,
+    lang_name: str,
+    low_value_pattern_text: str | None,
+    low_value_pattern_flags: int,
+) -> list[ReviewCandidate]:
+    low_value_pattern = (
+        re.compile(low_value_pattern_text, low_value_pattern_flags)
+        if isinstance(low_value_pattern_text, str)
+        else None
+    )
+    candidates: list[ReviewCandidate] = []
+
+    for filepath in files:
+        rpath = rel(filepath)
+
+        if zone_map is not None:
+            zone = zone_map.get(filepath)
+            if zone.value in ("test", "generated", "vendor", "config", "script"):
+                continue
+
+        if _is_low_value_file(rpath, lang_name, low_value_pattern=low_value_pattern):
+            continue
+
+        abs_path = resolve_path(filepath)
+        content = read_file_text(abs_path)
+        if content is None:
+            continue
+        loc = len(content.splitlines())
+        if loc < MIN_REVIEW_LOC:
+            continue
+
+        candidates.append((abs_path, rpath, loc, filepath))
+
+    return candidates
+
+
+def _review_status_batch_worker(
+    files: list[str],
+    candidate_map: dict[str, tuple[str, str, int]],
+    review_cache: dict,
+    now_iso: str,
+    max_age_days: int,
+    holistic_fresh: bool,
+) -> list[dict]:
+    now = datetime.fromisoformat(now_iso)
+    entries: list[dict] = []
+    for filepath in files:
+        candidate = candidate_map.get(filepath)
+        if candidate is None:
+            continue
+        abs_path, rpath, loc = candidate
         cached = review_cache.get(rpath)
         entry = _check_file_review_status(
-            abs_path, cached, loc, now, max_age_days, holistic_fresh,
+            abs_path,
+            cached,
+            loc,
+            now,
+            max_age_days,
+            holistic_fresh,
         )
         if entry is not None:
             entries.append(entry)
-
-    return entries, potential
+    return entries
 
 
 def detect_holistic_review_staleness(

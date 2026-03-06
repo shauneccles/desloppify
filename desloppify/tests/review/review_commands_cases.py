@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import json
+import orjson
 import subprocess
 import sys
 import time
@@ -158,7 +158,7 @@ class TestCmdReviewPrepare:
             }
         ]
         issues_file = tmp_path / "issues.json"
-        issues_file.write_text(json.dumps(issues))
+        issues_file.write_text(orjson.dumps(issues).decode("utf-8"))
 
         saved = {}
 
@@ -283,7 +283,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "issues_integrity_block.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -307,7 +307,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "issues_integrity_override.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         saved = {}
 
@@ -356,7 +356,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "issues_invalid_combo.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -391,7 +391,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "issues_trusted_internal.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -455,7 +455,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "issues_rebase.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -486,7 +486,7 @@ class TestCmdReviewPrepare:
 
         blind_packet = tmp_path / "review_packet_blind.json"
         blind_packet.write_text(
-            json.dumps({"command": "review", "dimensions": ["naming_quality"]})
+            orjson.dumps({"command": "review", "dimensions": ["naming_quality"]}).decode("utf-8")
         )
         packet_hash = hashlib.sha256(blind_packet.read_bytes()).hexdigest()
         payload = {
@@ -501,7 +501,7 @@ class TestCmdReviewPrepare:
             },
         }
         issues_file = tmp_path / "issues_attested_external.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -531,7 +531,7 @@ class TestCmdReviewPrepare:
     ):
         blind_packet = tmp_path / "review_packet_blind.json"
         blind_packet.write_text(
-            json.dumps({"command": "review", "dimensions": ["naming_quality"]})
+            orjson.dumps({"command": "review", "dimensions": ["naming_quality"]}).decode("utf-8")
         )
         packet_hash = hashlib.sha256(blind_packet.read_bytes()).hexdigest()
         payload = {
@@ -546,7 +546,7 @@ class TestCmdReviewPrepare:
             },
         }
         issues_file = tmp_path / "validate_issues.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -574,7 +574,7 @@ class TestCmdReviewPrepare:
             "issues": [],
         }
         issues_file = tmp_path / "validate_invalid_combo.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
         lang = MagicMock()
         lang.name = "typescript"
 
@@ -630,7 +630,7 @@ class TestCmdReviewPrepare:
             ],
         }
         issues_file = tmp_path / "partial.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -660,7 +660,7 @@ class TestCmdReviewPrepare:
             ],
         }
         issues_file = tmp_path / "partial_allowed.json"
-        issues_file.write_text(json.dumps(payload))
+        issues_file.write_text(orjson.dumps(payload).decode("utf-8"))
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -857,7 +857,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -986,7 +986,7 @@ class TestCmdReviewPrepare:
                 },
             }
             payload = payloads.get(out_path.name, payloads["batch-4.raw.txt"])
-            out_path.write_text(json.dumps(payload))
+            out_path.write_text(orjson.dumps(payload).decode("utf-8"))
             return MagicMock(returncode=0, stdout="ok", stderr="")
 
         captured: dict[str, object] = {}
@@ -995,7 +995,7 @@ class TestCmdReviewPrepare:
             captured["holistic"] = holistic
             captured["config"] = config
             captured["kwargs"] = kwargs
-            captured["payload"] = json.loads(Path(import_file).read_text())
+            captured["payload"] = orjson.loads(Path(import_file).read_text())
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -1047,7 +1047,7 @@ class TestCmdReviewPrepare:
         assert captured["kwargs"]["allow_partial"] is False
         summary_files = sorted(runs_dir.glob("*/run_summary.json"))
         assert len(summary_files) == 1
-        summary_payload = json.loads(summary_files[0].read_text())
+        summary_payload = orjson.loads(summary_files[0].read_text())
         assert summary_payload["failed_batches"] == []
         assert summary_payload["successful_batches"] == [1, 2, 3, 4]
 
@@ -1069,7 +1069,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1120,7 +1120,7 @@ class TestCmdReviewPrepare:
                     }
                 ],
             }
-            out_path.write_text(json.dumps(payload))
+            out_path.write_text(orjson.dumps(payload).decode("utf-8"))
             return MagicMock(returncode=0, stdout="ok", stderr="")
 
         captured: dict[str, object] = {}
@@ -1129,7 +1129,7 @@ class TestCmdReviewPrepare:
             captured["holistic"] = holistic
             captured["config"] = config
             captured["kwargs"] = kwargs
-            captured["payload"] = json.loads(Path(import_file).read_text())
+            captured["payload"] = orjson.loads(Path(import_file).read_text())
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -1178,7 +1178,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1217,7 +1217,7 @@ class TestCmdReviewPrepare:
                 },
                 "issues": [],
             }
-            out_path.write_text(json.dumps(payload))
+            out_path.write_text(orjson.dumps(payload).decode("utf-8"))
             return MagicMock(returncode=0, stdout="ok", stderr="")
 
         def fake_execute_batches(**kwargs):
@@ -1295,7 +1295,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1347,7 +1347,7 @@ class TestCmdReviewPrepare:
             # Simulate Codex occasionally returning JSON on stdout while failing
             # to write the -o output file. collect_batch_results should recover
             # from the batch log and persist the recovered raw payload.
-            return MagicMock(returncode=0, stdout=json.dumps(raw_payload), stderr="")
+            return MagicMock(returncode=0, stdout=orjson.dumps(raw_payload).decode("utf-8"), stderr="")
 
         captured: dict[str, object] = {}
 
@@ -1355,7 +1355,7 @@ class TestCmdReviewPrepare:
             captured["holistic"] = holistic
             captured["config"] = config
             captured["kwargs"] = kwargs
-            captured["payload"] = json.loads(Path(import_file).read_text())
+            captured["payload"] = orjson.loads(Path(import_file).read_text())
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -1396,13 +1396,13 @@ class TestCmdReviewPrepare:
 
         recovered_results = sorted(runs_dir.glob("*/results/batch-1.raw.txt"))
         assert len(recovered_results) == 1
-        recovered_payload = json.loads(recovered_results[0].read_text())
+        recovered_payload = orjson.loads(recovered_results[0].read_text())
         assert recovered_payload["assessments"]["mid_level_elegance"] == pytest.approx(72.0)
         assert recovered_payload["issues"][0]["identifier"] == "seam_split_between_siblings"
 
         summary_files = sorted(runs_dir.glob("*/run_summary.json"))
         assert len(summary_files) == 1
-        summary_payload = json.loads(summary_files[0].read_text())
+        summary_payload = orjson.loads(summary_files[0].read_text())
         assert summary_payload["failed_batches"] == []
         assert summary_payload["successful_batches"] == [1]
 
@@ -1430,7 +1430,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1458,7 +1458,7 @@ class TestCmdReviewPrepare:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             if out_path.name == "batch-1.raw.txt":
                 out_path.write_text(
-                    json.dumps(
+                    orjson.dumps(
                         {
                             "assessments": {"mid_level_elegance": 77},
                             "dimension_notes": {
@@ -1484,7 +1484,7 @@ class TestCmdReviewPrepare:
                                 }
                             ],
                         }
-                    )
+                    ).decode("utf-8")
                 )
                 return MagicMock(returncode=0, stdout="ok", stderr="")
             return MagicMock(returncode=124, stdout="", stderr="timed out")
@@ -1495,7 +1495,7 @@ class TestCmdReviewPrepare:
             captured["holistic"] = holistic
             captured["config"] = config
             captured["kwargs"] = kwargs
-            captured["payload"] = json.loads(Path(import_file).read_text())
+            captured["payload"] = orjson.loads(Path(import_file).read_text())
 
         lang = MagicMock()
         lang.name = "typescript"
@@ -1530,7 +1530,7 @@ class TestCmdReviewPrepare:
         assert captured["kwargs"]["allow_partial"] is True
         summary_files = sorted(runs_dir.glob("*/run_summary.json"))
         assert len(summary_files) == 1
-        summary_payload = json.loads(summary_files[0].read_text())
+        summary_payload = orjson.loads(summary_files[0].read_text())
         assert summary_payload["failed_batches"] == [2]
         assert summary_payload["successful_batches"] == [1]
 
@@ -1552,7 +1552,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1621,7 +1621,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -1676,7 +1676,7 @@ class TestCmdReviewPrepare:
                     }
                 ],
             }
-            out_path.write_text(json.dumps(payload))
+            out_path.write_text(orjson.dumps(payload).decode("utf-8"))
             return MagicMock(returncode=0, stdout="ok", stderr="")
 
         captured: dict[str, object] = {}
@@ -1685,7 +1685,7 @@ class TestCmdReviewPrepare:
             captured["holistic"] = holistic
             captured["config"] = config
             captured["kwargs"] = kwargs
-            captured["payload"] = json.loads(Path(import_file).read_text())
+            captured["payload"] = orjson.loads(Path(import_file).read_text())
 
         lang = MagicMock()
         lang.name = "python"
@@ -1905,7 +1905,7 @@ class TestCmdReviewPrepare:
 
         output_file = tmp_path / "batch-1.raw.txt"
         output_file.write_text(
-            json.dumps(
+            orjson.dumps(
                 {
                     "assessments": {"logic_clarity": 88.0},
                     "dimension_notes": {
@@ -1918,7 +1918,7 @@ class TestCmdReviewPrepare:
                     },
                     "issues": [],
                 }
-            )
+            ).decode("utf-8")
         )
 
         def normalize_result(payload, _allowed_dims):
@@ -1930,7 +1930,7 @@ class TestCmdReviewPrepare:
             failures=[0],
             output_files={0: output_file},
             allowed_dims={"logic_clarity"},
-            extract_payload_fn=lambda raw: json.loads(raw),
+            extract_payload_fn=lambda raw: orjson.loads(raw),
             normalize_result_fn=normalize_result,
         )
 
@@ -2270,7 +2270,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -2344,7 +2344,7 @@ class TestCmdReviewPrepare:
             ],
         }
         packet_path = tmp_path / "packet.json"
-        packet_path.write_text(json.dumps(packet))
+        packet_path.write_text(orjson.dumps(packet).decode("utf-8"))
 
         args = MagicMock()
         args.path = str(tmp_path)
@@ -2389,7 +2389,7 @@ class TestCmdReviewPrepare:
         assert exc_info.value.code == 130
         summary_files = sorted(runs_dir.glob("*/run_summary.json"))
         assert len(summary_files) == 1
-        summary_payload = json.loads(summary_files[0].read_text())
+        summary_payload = orjson.loads(summary_files[0].read_text())
         assert summary_payload["interrupted"] is True
         assert summary_payload["interruption_reason"] == "keyboard_interrupt"
         assert summary_payload["successful_batches"] == []

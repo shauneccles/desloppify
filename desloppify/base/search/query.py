@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import sys
 from pathlib import Path
@@ -22,7 +22,7 @@ QUERY_TEXT_LIMIT = 400
 
 def _payload_size_bytes(payload: dict) -> int:
     """Return UTF-8 byte size for a JSON-serializable payload."""
-    return len(json.dumps(payload, indent=2, default=json_default).encode("utf-8"))
+    return len(orjson.dumps(payload, option=orjson.OPT_INDENT_2, default=json_default))
 
 
 def _truncate_text(value: object, *, limit: int | None = None) -> object:
@@ -200,13 +200,16 @@ def write_query(data: dict, *, query_file: Path) -> OutputResult:
     if "config" not in payload:
         try:
             payload["config"] = config_for_query(load_config())
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, orjson.JSONDecodeError) as exc:
             payload["config_error"] = str(exc)
             logger.debug("Skipping config injection into query payload: %s", exc)
 
     payload, truncation_notes = _enforce_payload_budget(payload)
     try:
-        safe_write_text(query_file, json.dumps(payload, indent=2, default=json_default) + "\n")
+        safe_write_text(
+            query_file,
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2, default=json_default).decode("utf-8") + "\n",
+        )
         print("  → query.json updated", file=sys.stderr)
         if truncation_notes:
             print(

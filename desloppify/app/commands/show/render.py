@@ -28,7 +28,10 @@ from .formatting import format_detail
 def write_show_output_file(output_file: str, payload: dict, surfaced_count: int) -> bool:
     """Write serialized show payload to file."""
     try:
-        safe_write_text(output_file, json.dumps(payload, indent=2) + "\n")
+        safe_write_text(
+            output_file,
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+        )
         print(colorize(f"Wrote {surfaced_count} issues to {output_file}", "green"))
     except OSError as exc:
         payload["output_error"] = str(exc)

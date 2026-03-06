@@ -31,17 +31,17 @@ def load_plan(path: Path | None = None) -> PlanModel:
         return empty_plan()
 
     try:
-        data = json.loads(plan_path.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as ex:
+        data = orjson.loads(plan_path.read_bytes())
+    except (orjson.JSONDecodeError, OSError) as ex:
         # Try backup before giving up
         backup = plan_path.with_suffix(".json.bak")
         if backup.exists():
             try:
-                data = json.loads(backup.read_text())
+                data = orjson.loads(backup.read_bytes())
                 logger.warning("Plan file corrupted (%s), loaded from backup.", ex)
                 print(f"  Warning: Plan file corrupted ({ex}), loaded from backup.", file=sys.stderr)
                 # Fall through to validation below
-            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as backup_ex:
+            except (orjson.JSONDecodeError, OSError) as backup_ex:
                 logger.warning("Plan file and backup both corrupted: %s / %s", ex, backup_ex)
                 print(f"  Warning: Plan file corrupted ({ex}). Starting fresh.", file=sys.stderr)
                 return empty_plan()

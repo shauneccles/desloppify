@@ -24,19 +24,22 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from desloppify.base.discovery.file_paths import rel
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import (
+    BATCH_TIMEOUT_SECONDS,
+    MAX_RETRY_ATTEMPTS,
+    process_files_parallel,
+    should_parallelize,
+)
 from desloppify.engine.policy.zones import FileZoneMap, Zone
 from desloppify.languages._framework.base.types import DetectorCoverageStatus
 
 logger = logging.getLogger(__name__)
 
-# Import bandit_parallel lazily to avoid circular import
-# (bandit_parallel imports from this module)
-if TYPE_CHECKING:
-    from . import bandit_parallel
+MIN_FILES_FOR_PARALLEL = 50
 
 _SEVERITY_TO_TIER = {"HIGH": 4, "MEDIUM": 3, "LOW": 3}
 _SEVERITY_TO_CONFIDENCE = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
@@ -350,7 +353,7 @@ def _detect_with_bandit_files_single(
             cmd,
             capture_output=True,
             text=True,
-            cwd=PROJECT_ROOT,
+            cwd=get_project_root(),
             timeout=timeout,
         )
     except FileNotFoundError:
@@ -422,6 +425,49 @@ def _detect_with_bandit_files_single(
     )
 
 
+def _detect_with_bandit_batch_worker(
+    files: list[str],
+    zone_map: FileZoneMap | None,
+    bandit_timeout: int,
+) -> dict:
+    """Batch worker wrapper compatible with process_files_parallel."""
+    result = _detect_with_bandit_files_single(
+        files=files,
+        zone_map=zone_map,
+        timeout=bandit_timeout,
+    )
+    return {
+        "entries": result.entries,
+        "files_scanned": result.files_scanned,
+        "status": result.status.state,
+        "detail": result.status.detail,
+    }
+
+
+def _combine_parallel_bandit_batch_results(
+    batch_results: list[dict],
+) -> BanditRunStatus:
+    states = [str(result.get("status", "ok")) for result in batch_results]
+    if not states:
+        return BanditRunStatus(state="ok")
+    if all(state == "ok" for state in states):
+        return BanditRunStatus(state="ok")
+    if all(state == "missing_tool" for state in states):
+        return BanditRunStatus(state="missing_tool")
+    if "timeout" in states:
+        return BanditRunStatus(
+            state="timeout",
+            detail=f"{sum(1 for state in states if state == 'timeout')} batch(es) timed out",
+        )
+    if all(state != "ok" for state in states):
+        return BanditRunStatus(state="error", detail="all bandit batches failed")
+    failed = sum(1 for state in states if state != "ok")
+    return BanditRunStatus(
+        state="ok",
+        detail=f"{failed} batch(es) failed; returning partial results",
+    )
+
+
 def detect_with_bandit(
     path: Path | None = None,
     zone_map: FileZoneMap | None = None,
@@ -441,10 +487,10 @@ def detect_with_bandit(
     - **File-list mode** (files provided): Scans specific files, enables parallelization
     
     Parallelization:
-    - Auto-enabled for 50+ files (configurable via DESLOPPIFY_BANDIT_PARALLEL env var)
+    - Auto-enabled for 50+ files (configurable via DESLOPPIFY_PARALLEL env var)
     - Falls back to single-process if multiprocessing unavailable
-    - Force enable: parallel=True or DESLOPPIFY_BANDIT_PARALLEL=true
-    - Force disable: parallel=False or DESLOPPIFY_BANDIT_PARALLEL=false
+    - Force enable: parallel=True or DESLOPPIFY_PARALLEL=true
+    - Force disable: parallel=False or DESLOPPIFY_PARALLEL=false
     
     Parameters
     ----------
@@ -476,44 +522,18 @@ def detect_with_bandit(
     Force parallel mode:
     >>> detect_with_bandit(files=python_files, zone_map=zone_map, parallel=True)
     """
-    # File-list mode: can use parallel implementation
+    # File-list mode: use central parallel framework for batch fanout.
     if files is not None:
-        # Lazy import to avoid circular dependency
-        bandit_parallel = None
-        try:
-            from . import bandit_parallel
-        except ImportError as e:
-            logger.debug("bandit_parallel import failed: %s", e)
-        
-        # Determine if parallel mode should be used
         use_parallel = parallel
         if use_parallel is None:
-            # Auto-detect: use parallel for 50+ files
-            use_parallel = (
-                bandit_parallel is not None
-                and bandit_parallel.should_use_parallel_bandit(len(files))
+            use_parallel = should_parallelize(
+                file_count=len(files),
+                min_files=MIN_FILES_FOR_PARALLEL,
             )
-        elif use_parallel and bandit_parallel is None:
-            logger.warning(
-                "Parallel mode requested but not available (import failed), "
-                "falling back to single-process"
-            )
-            use_parallel = False
-        
-        if use_parallel and bandit_parallel is not None:
+
+        if use_parallel is False:
             logger.debug(
-                "Using parallel Bandit mode for %d files",
-                len(files),
-            )
-            return bandit_parallel.detect_with_bandit_parallel(
-                files=files,
-                zone_map=zone_map,
-                timeout=timeout,
-            )
-        else:
-            # File-list mode with single process: run bandit on files directly
-            logger.debug(
-                "Using single-process Bandit mode for %d files (below threshold)",
+                "Using single-process Bandit mode for %d files",
                 len(files),
             )
             return _detect_with_bandit_files_single(
@@ -521,6 +541,57 @@ def detect_with_bandit(
                 zone_map=zone_map,
                 timeout=timeout,
             )
+
+        logger.debug(
+            "Using framework parallel Bandit mode for %d files",
+            len(files),
+        )
+        batch_results = process_files_parallel(
+            files=files,
+            worker_func=_detect_with_bandit_batch_worker,
+            mode="extend",
+            min_files=MIN_FILES_FOR_PARALLEL,
+            force_parallel=parallel,
+            timeout=max(timeout, BATCH_TIMEOUT_SECONDS),
+            task_name="BanditScan",
+            max_retries=MAX_RETRY_ATTEMPTS,
+            fail_on_incomplete=True,
+            zone_map=zone_map,
+            bandit_timeout=timeout,
+        )
+
+        if isinstance(batch_results, dict):
+            return BanditScanResult(
+                entries=list(batch_results.get("entries", [])),
+                files_scanned=int(batch_results.get("files_scanned", 0)),
+                status=BanditRunStatus(
+                    state=str(batch_results.get("status", "ok")),
+                    detail=str(batch_results.get("detail", "")),
+                ),
+            )
+
+        if not batch_results:
+            return BanditScanResult(
+                entries=[],
+                files_scanned=0,
+                status=BanditRunStatus(
+                    state="error",
+                    detail="parallel bandit batch execution incomplete",
+                ),
+            )
+
+        entries: list[dict] = []
+        files_scanned = 0
+        for batch in batch_results:
+            entries.extend(batch.get("entries", []))
+            files_scanned += int(batch.get("files_scanned", 0))
+
+        status = _combine_parallel_bandit_batch_results(batch_results)
+        return BanditScanResult(
+            entries=entries,
+            files_scanned=files_scanned,
+            status=status,
+        )
     
     # Directory mode: use single-process recursive scan
     if path is None:

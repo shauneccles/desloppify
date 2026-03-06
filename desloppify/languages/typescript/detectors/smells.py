@@ -3,10 +3,11 @@
 Defines TS-specific smell rules and orchestrates multi-line smell detection.
 """
 
-import json
 import logging
 import re
 from pathlib import Path
+
+import orjson
 
 from desloppify.base.discovery.source import (
 
@@ -17,6 +18,7 @@ from desloppify.base.discovery.source import (
 )
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.languages.typescript.detectors._smell_detectors import (
     _detect_async_no_await,
     _detect_catch_return_default,
@@ -342,7 +344,7 @@ def _process_ts_smell_file(filepath: str, checks: list[dict]) -> dict[str, list[
         p = (
             Path(filepath)
             if Path(filepath).is_absolute()
-            else PROJECT_ROOT / filepath
+            else get_project_root() / filepath
         )
         content = p.read_text()
         lines = content.splitlines()
@@ -383,19 +385,9 @@ def _process_ts_smell_file(filepath: str, checks: list[dict]) -> dict[str, list[
                 }
             )
 
-    # Multi-line smell helpers (brace-tracked)
-    _detect_async_no_await(filepath, content, lines, smell_counts)
-    _detect_error_no_throw(filepath, lines, smell_counts)
-    _detect_empty_if_chains(filepath, lines, smell_counts)
-    _detect_dead_useeffects(filepath, lines, smell_counts)
-    _detect_swallowed_errors(filepath, content, lines, smell_counts)
-    _detect_monster_functions(filepath, lines, smell_counts)
-    _detect_dead_functions(filepath, lines, smell_counts)
-    _detect_window_globals(filepath, lines, line_state, smell_counts)
-    _detect_catch_return_default(filepath, content, smell_counts)
-    _detect_switch_no_default(filepath, content, smell_counts)
-    _detect_nested_closures(filepath, lines, smell_counts)
-    _detect_high_cyclomatic_complexity(filepath, lines, smell_counts)
+    ctx = _FileContext(filepath, content, lines, line_state)
+    for detector in _MULTI_LINE_DETECTORS:
+        detector(ctx, smell_counts)
     
     return smell_counts
 
@@ -419,59 +411,20 @@ def detect_smells(path: Path) -> tuple[list[dict], int]:
     """
     checks = TS_SMELL_CHECKS
     files = find_ts_files(path)
+    smell_counts: dict[str, list[dict]] = {s["id"]: [] for s in checks}
 
-    for filepath in files:
-        if "node_modules" in filepath or ".d.ts" in filepath:
-            continue
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-            lines = content.splitlines()
-        except (OSError, UnicodeDecodeError) as exc:
-            log_best_effort_failure(
-                logger, f"read TypeScript smell candidate {filepath}", exc
-            )
-            continue
-
-        # Build line state for string/comment filtering
-        line_state = _build_ts_line_state(lines)
-        ctx = _FileContext(filepath, content, lines, line_state)
-
-        # Regex-based smells
-        for check in checks:
-            if check["pattern"] is None:
-                continue
-            for i, line in enumerate(lines):
-                # Skip lines inside block comments or template literals
-                if i in line_state:
-                    continue
-                m = re.search(check["pattern"], line)
-                if not m:
-                    continue
-                # Check if match is inside a single-line string or comment
-                if _ts_match_is_in_string(line, m.start()):
-                    continue
-                # Skip URLs assigned to module-level constants
-                if check["id"] == "hardcoded_url" and re.match(
-                    r"^(?:export\s+)?(?:const|let|var)\s+[A-Z_][A-Z0-9_]*\s*=",
-                    line.strip(),
-                ):
-                    continue
-                smell_counts[check["id"]].append(
-                    {
-                        "file": filepath,
-                        "line": i + 1,
-                        "content": line.strip()[:100],
-                    }
-                )
-
-        # Multi-line smell detectors (brace-tracked, uniform ctx signature)
-        for detector in _MULTI_LINE_DETECTORS:
-            detector(ctx, smell_counts)
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_ts_smells_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="typescript smells",
+        checks=checks,
+    )
+    normalized_batches = batch_results if isinstance(batch_results, list) else [batch_results]
+    for batch in normalized_batches:
+        for smell_id, matches in batch.items():
+            smell_counts.setdefault(smell_id, []).extend(matches)
 
     non_ts_files = _detect_non_ts_asset_smells(path, smell_counts)
 

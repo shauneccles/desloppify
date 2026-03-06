@@ -32,6 +32,7 @@ from desloppify.base.discovery.source import (
 from desloppify.base.output.terminal import colorize, print_table
 from desloppify.base.discovery.paths import get_project_root
 from desloppify.base.text_utils import strip_c_style_comments
+from desloppify.engine.parallel_utils import process_files_parallel
 
 TS6133_RE = re.compile(
     r"^(.+)\((\d+),(\d+)\): error TS6133: '(\S+)' is declared but its value is never read\."
@@ -111,7 +112,7 @@ def _extract_import_names(line: str) -> list[str]:
 
 def _process_unused_file(filepath: str, category: str) -> list[dict]:
     """Process a single TS file for unused declarations."""
-    full = Path(filepath) if Path(filepath).is_absolute() else PROJECT_ROOT / filepath
+    full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
     raw = read_file_text(str(full))
     if raw is None:
         return []
@@ -120,45 +121,15 @@ def _process_unused_file(filepath: str, category: str) -> list[dict]:
     lines = raw.splitlines()
     entries: list[dict] = []
 
-    for filepath in files:
-        full = Path(filepath) if Path(filepath).is_absolute() else get_project_root() / filepath
-        raw = read_file_text(str(full))
-        if raw is None:
-            continue
-        code = strip_c_style_comments(raw)
-        lines = raw.splitlines()
-
-        # Import-based unused checks.
-        if category in {"all", "imports"}:
-            for lineno, line in enumerate(lines, 1):
-                if line.lstrip() != line:
-                    continue
-                if not line.strip().startswith("import "):
-                    continue
-                for name in _extract_import_names(line):
-                    if name.startswith("_"):
-                        continue
-                    if _identifier_occurrences(code, name) <= 1:
-                        entries.append(
-                            {
-                                "file": filepath,
-                                "line": lineno,
-                                "col": max(1, line.find(name) + 1),
-                                "name": name,
-                                "category": "imports",
-                            }
-                        )
-
-        # Top-level variable/function/class declarations (non-exported only).
-        if category in {"all", "vars"}:
-            for lineno, line in enumerate(lines, 1):
-                if line.lstrip() != line:
-                    continue
-                m = _DECL_RE.match(line)
-                if not m:
-                    continue
-                exported, name = m.group(1), m.group(2)
-                if exported or name.startswith("_"):
+    # Import-based unused checks.
+    if category in {"all", "imports"}:
+        for lineno, line in enumerate(lines, 1):
+            if line.lstrip() != line:
+                continue
+            if not line.strip().startswith("import "):
+                continue
+            for name in _extract_import_names(line):
+                if name.startswith("_"):
                     continue
                 if _identifier_occurrences(code, name) <= 1:
                     entries.append(

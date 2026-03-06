@@ -26,7 +26,7 @@ Example Usage:
         entries.extend(result)
     
     # Parallel (new way)
-    from desloppify.engine._parallel_utils import process_files_parallel
+    from desloppify.engine.parallel_utils import process_files_parallel
     
     entries = process_files_parallel(
         files=files,
@@ -40,13 +40,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import multiprocessing
 import os
 import pickle
 from contextlib import contextmanager
 from contextvars import ContextVar
-from pathlib import Path
-from typing import Callable, Any, TypeVar, Literal, TYPE_CHECKING, Generic
+from typing import Callable, Any, TypeVar, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from desloppify.engine.policy.zones import FileZoneMap
@@ -54,7 +52,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-ResultType = TypeVar("ResultType")
+
+
+def _is_pickling_related_error(exc: Exception) -> bool:
+    """Return True when an exception likely indicates pickling/import failure."""
+    if isinstance(exc, pickle.PicklingError):
+        return True
+    message = str(exc).lower()
+    return "pickle" in message or "can't pickle" in message or "cannot pickle" in message
 
 
 # =============================================================================
@@ -65,7 +70,12 @@ DEFAULT_MIN_FILES = 50  # Minimum files to justify parallel overhead
 DEFAULT_BATCH_SIZE = 10  # Minimum files per worker
 BATCH_TIMEOUT_SECONDS = 180  # 3-minute timeout per batch
 MAX_RETRY_ATTEMPTS = 3  # Maximum retries for failed batches
+MAX_PROCESS_WORKERS = 8  # Absolute max workers to prevent overload on large machines
 
+
+def _default_max_workers(cpu_count: int) -> int:
+    """Return default process-worker cap from CPU count and global limit."""
+    return max(1, min(cpu_count - 1, MAX_PROCESS_WORKERS))
 
 # Scan-lifetime persistent pool (optional, enabled by caller context)
 _PERSISTENT_POOL: ContextVar[concurrent.futures.ProcessPoolExecutor | None] = ContextVar(
@@ -86,7 +96,10 @@ def persistent_parallel_pool(max_workers: int | None = None):
         yield existing
         return
 
-    worker_count = max_workers or max(1, get_cpu_count() - 1)
+    cpu_count = get_cpu_count()
+    default_max = _default_max_workers(cpu_count)
+    requested_workers = max_workers if max_workers is not None else default_max
+    worker_count = max(1, min(requested_workers, default_max, cpu_count))
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=worker_count)
     token = _PERSISTENT_POOL.set(executor)
     logger.debug("Started persistent parallel pool (%d workers)", worker_count)
@@ -140,16 +153,14 @@ def check_parallel_override() -> bool | None:
 def should_parallelize(
     file_count: int, 
     min_files: int = DEFAULT_MIN_FILES,
-    legacy_env_var: str | None = None
 ) -> bool:
     """Determine if parallelization is worthwhile.
     
-    Checks DESLOPPIFY_PARALLEL first, falls back to legacy env var, then auto-detects.
+    Checks DESLOPPIFY_PARALLEL first, then auto-detects.
     
     Args:
         file_count: Number of files to process
         min_files: Minimum files needed to justify parallel overhead
-        legacy_env_var: Optional legacy environment variable name (for backward compat)
         
     Returns:
         True if should use parallel execution
@@ -158,14 +169,6 @@ def should_parallelize(
     global_override = check_parallel_override()
     if global_override is not None:
         return global_override
-    
-    # Check legacy variable for backward compatibility
-    if legacy_env_var:
-        env_val = os.getenv(legacy_env_var, "").lower()
-        if env_val in ("true", "1", "yes"):
-            return True
-        if env_val in ("false", "0", "no"):
-            return False
     
     # Auto-detect based on file count
     return file_count >= min_files
@@ -187,7 +190,7 @@ def calculate_workers(
         Number of worker processes to spawn
     """
     cpu_count = get_cpu_count()
-    default_max = max(1, cpu_count - 1)  # Leave one core for main process
+    default_max = _default_max_workers(cpu_count)  # More than MAX_PROCESS_WORKERS workers is rarely beneficial due to overhead, even on large machines
     max_workers = max_workers or default_max
     
     # Calculate based on minimum batch size
@@ -319,7 +322,6 @@ def process_files_parallel(
     mode: Literal["extend", "count", "dict_merge", "sum", "max", "min"] = "extend",
     min_files: int = DEFAULT_MIN_FILES,
     force_parallel: bool | None = None,
-    legacy_env_var: str | None = None,
     timeout: int | None = BATCH_TIMEOUT_SECONDS,
     task_name: str = "file processing",
     max_retries: int = 1,
@@ -345,8 +347,7 @@ def process_files_parallel(
         force_parallel: Explicit override for parallel mode selection.
             - True: always parallelize (ignores env and threshold)
             - False: always run sequentially (ignores env and threshold)
-            - None: use DESLOPPIFY_PARALLEL / legacy env var / threshold auto-detection
-        legacy_env_var: Optional legacy env var for backward compat
+            - None: use DESLOPPIFY_PARALLEL / threshold auto-detection
         timeout: Timeout per batch in seconds (default: 180)
         task_name: Description for logging
         max_retries: Maximum retry attempts per batch (default: 1, no retries)
@@ -387,7 +388,6 @@ def process_files_parallel(
         use_parallel = should_parallelize(
             len(files),
             min_files=min_files,
-            legacy_env_var=legacy_env_var
         )
     
     if not use_parallel:
@@ -476,8 +476,8 @@ def process_files_parallel(
                             permanently_failed.add(batch_idx)
 
                             # Check if it's a pickling error and fall back immediately
-                            if isinstance(exc, (TypeError, AttributeError, pickle.PicklingError)):
-                                raise
+                            if _is_pickling_related_error(exc):
+                                raise pickle.PicklingError(str(exc)) from exc
 
             except concurrent.futures.TimeoutError:
                 # Timeout - mark remaining futures as needing retry
@@ -535,8 +535,7 @@ def process_files_parallel(
                 f"attempts, returning partial results. Failed batch IDs: {sorted(permanently_failed)}"
             )
                 
-    except (TypeError, AttributeError, pickle.PicklingError, 
-            concurrent.futures.process.BrokenProcessPool) as exc:
+    except (pickle.PicklingError, concurrent.futures.process.BrokenProcessPool) as exc:
         if shared_executor is not None and isinstance(exc, concurrent.futures.process.BrokenProcessPool):
             logger.warning(
                 f"{task_name}: Invalidating persistent parallel pool after BrokenProcessPool"
@@ -594,15 +593,6 @@ def extract_batch_zones(
     }
 
 
-# =============================================================================
-# Backward Compatibility Exports
-# =============================================================================
-
-# These maintain backward compatibility with existing code
-batch_files = batch_items  # Alias for consistency
-parallel_map = process_files_parallel  # Legacy name
-
-
 __all__ = [
     # Core API
     "process_files_parallel",
@@ -618,8 +608,4 @@ __all__ = [
     
     # Specialized helpers
     "extract_batch_zones",
-    
-    # Backward compatibility
-    "batch_files",
-    "parallel_map",
 ]

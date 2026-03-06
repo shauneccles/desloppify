@@ -8,7 +8,7 @@ Covers the pure-logic functions in:
 
 from __future__ import annotations
 
-import json
+import orjson
 import threading
 from concurrent.futures import Future
 from pathlib import Path
@@ -134,7 +134,7 @@ class TestExtractPayloadFromLog:
         log_content = (
             "some preamble\n"
             "\nSTDOUT:\n"
-            f"{json.dumps(payload)}\n"
+            f"{orjson.dumps(payload).decode('utf-8')}\n"
             "\n\nSTDERR:\n"
             "some error text\n"
         )
@@ -142,9 +142,9 @@ class TestExtractPayloadFromLog:
 
         def extract_fn(text):
             try:
-                obj = json.loads(text.strip())
+                obj = orjson.loads(text.strip())
                 return obj if isinstance(obj, dict) else None
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 return None
 
         result = _extract_payload_from_log(0, raw_path, extract_fn)
@@ -153,14 +153,14 @@ class TestExtractPayloadFromLog:
     def test_extracts_from_stdout_at_start_of_file(self, tmp_path):
         """When STDOUT: is at the very start (no leading newline)."""
         payload = {"issues": []}
-        log_content = f"STDOUT:\n{json.dumps(payload)}\n\n\nSTDERR:\nwarning\n"
+        log_content = f"STDOUT:\n{orjson.dumps(payload).decode('utf-8')}\n\n\nSTDERR:\nwarning\n"
         raw_path = self._setup_log(tmp_path, 2, log_content)
 
         def extract_fn(text):
             try:
-                obj = json.loads(text.strip())
+                obj = orjson.loads(text.strip())
                 return obj if isinstance(obj, dict) else None
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 return None
 
         result = _extract_payload_from_log(2, raw_path, extract_fn)
@@ -182,14 +182,14 @@ class TestExtractPayloadFromLog:
     def test_no_stdout_marker_falls_back_to_whole_log(self, tmp_path):
         """When there is no STDOUT marker, extract_fn gets the whole log."""
         payload = {"quality": {"overall": 0.9}}
-        log_content = json.dumps(payload)
+        log_content = orjson.dumps(payload).decode("utf-8")
         raw_path = self._setup_log(tmp_path, 1, log_content)
 
         def extract_fn(text):
             try:
-                obj = json.loads(text.strip())
+                obj = orjson.loads(text.strip())
                 return obj if isinstance(obj, dict) else None
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 return None
 
         result = _extract_payload_from_log(1, raw_path, extract_fn)

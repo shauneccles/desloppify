@@ -68,7 +68,7 @@ def resolve_import_spec(
             candidates.append(f"{parent}/{leaf}.go")
 
     normalized_production = {
-        file_path.replace("\\", "/").strip("/"): file_path for file_path in production_files
+        filepath.replace("\\", "/").strip("/"): filepath for filepath in production_files
     }
     for candidate in candidates:
         normalized_candidate = candidate.replace("\\", "/").strip("/")

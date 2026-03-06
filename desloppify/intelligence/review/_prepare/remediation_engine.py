@@ -31,8 +31,8 @@ def render_empty_remediation_plan(state: StateModel, lang_name: str) -> str:
     overall, objective, strict = _score_snapshot(state)
     return (
         "# Holistic Review: Remediation Plan\n\n"
-        f"**Scores**: overall {overall:.1f}/100 · "
-        f"objective {objective:.1f}/100 · strict {strict:.1f}/100\n\n"
+        f"**Scores**: overall {overall:.1f}/100 | "
+        f"objective {objective:.1f}/100 | strict {strict:.1f}/100\n\n"
         "No open holistic issues. The codebase is clean at the architectural level.\n\n"
         "To start a new holistic review cycle:\n"
         "```bash\n"
@@ -111,8 +111,8 @@ def _render_header(
     append("# Holistic Review: Remediation Plan\n")
     append(f"**Generated**: {utc_now()[:10]}  ")
     append(
-        f"**Current scores**: overall {overall:.1f}/100 · "
-        f"objective {objective:.1f}/100 · strict {strict:.1f}/100  "
+        f"**Current scores**: overall {overall:.1f}/100 | "
+        f"objective {objective:.1f}/100 | strict {strict:.1f}/100  "
     )
     append(f"**Open holistic issues**: {len(entries)}  ")
     append(f"**Estimated improvement**: ~{total_impact:.1f} pts if all addressed\n")
@@ -130,7 +130,7 @@ def _render_usage(lines: list[str], lang_name: str) -> None:
     append(
         f"   `desloppify --lang {lang_name} review --prepare --path <src>`"
     )
-    append("   Then have an agent investigate and import — previously addressed")
+    append("   Then have an agent investigate and import - previously addressed")
     append("   issues auto-resolve if not re-reported.\n")
     append("---\n")
 

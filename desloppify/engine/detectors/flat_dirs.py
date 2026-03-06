@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from desloppify.base.discovery.file_paths import resolve_scan_file
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -139,26 +140,54 @@ def _build_dir_stats(
     scan_root: Path,
     files: list[str],
 ) -> tuple[Counter[str], dict[str, set[str]]]:
+    batch_results = process_files_parallel(
+        files=files,
+        worker_func=_flat_dirs_batch_worker,
+        mode="extend",
+        min_files=100,
+        task_name="flat directory stats",
+        scan_root=str(scan_root),
+    )
+
     dir_counts: Counter[str] = Counter()
     child_dirs: dict[str, set[str]] = {}
-    for file_path in files:
+    normalized_batches = batch_results if isinstance(batch_results, list) else [batch_results]
+    for batch in normalized_batches:
+        if not isinstance(batch, dict):
+            continue
+        for dirname, count in batch.get("dir_counts", {}).items():
+            dir_counts[str(dirname)] += int(count)
+        for parent, children in batch.get("child_dirs", {}).items():
+            child_dirs.setdefault(str(parent), set()).update(str(child) for child in children)
+
+    return dir_counts, child_dirs
+
+
+def _flat_dirs_batch_worker(files: list[str], scan_root: str) -> dict:
+    root = Path(scan_root)
+    dir_counts: dict[str, int] = {}
+    child_dirs: dict[str, set[str]] = {}
+    for filepath in files:
         try:
-            resolved_file = resolve_scan_file(file_path, scan_root=scan_root).resolve()
+            resolved_file = resolve_scan_file(filepath, scan_root=root).resolve()
             parent_path = resolved_file.parent
-            parent_rel = parent_path.relative_to(scan_root)
-        except (OSError, ValueError) as exc:
-            logger.debug("Skipping unresolvable file %s: %s", file_path, exc)
+            parent_rel = parent_path.relative_to(root)
+        except (OSError, ValueError):
             continue
 
-        parent = str((scan_root / parent_rel).resolve())
-        dir_counts[parent] += 1
+        parent = str((root / parent_rel).resolve())
+        dir_counts[parent] = dir_counts.get(parent, 0) + 1
         parts = parent_rel.parts
         for idx in range(len(parts) - 1):
-            ancestor = (scan_root / Path(*parts[: idx + 1])).resolve()
-            child = (scan_root / Path(*parts[: idx + 2])).resolve()
+            ancestor = (root / Path(*parts[: idx + 1])).resolve()
+            child = (root / Path(*parts[: idx + 2])).resolve()
             ancestor_key = str(ancestor)
             child_dirs.setdefault(ancestor_key, set()).add(str(child))
-    return dir_counts, child_dirs
+
+    return {
+        "dir_counts": dir_counts,
+        "child_dirs": {parent: sorted(children) for parent, children in child_dirs.items()},
+    }
 
 
 def _all_tracked_dirs(

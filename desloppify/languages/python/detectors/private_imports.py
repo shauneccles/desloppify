@@ -10,9 +10,12 @@ from pathlib import Path
 from desloppify.base.discovery.file_paths import rel
 
 from desloppify.base.discovery.source import read_file_text
+from desloppify.engine.parallel_utils import process_files_parallel
 from desloppify.engine.policy.zones import EXCLUDED_ZONES, Zone
 
 logger = logging.getLogger(__name__)
+
+_PRIVATE_IMPORTS_PARALLEL_MIN_FILES = 80
 
 
 def _is_dunder(name: str) -> bool:
@@ -46,19 +49,18 @@ def _is_test_file(filepath: str) -> bool:
     return any(marker in padded for marker in markers)
 
 
-def detect_private_imports(
+def _private_imports_batch_worker(
+    files: list[str],
+    *,
     dep_graph: dict,
-    zone_map=None,
-    file_finder=None,
-    path: Path | None = None,
+    zone_map,
+    project_files: set[str],
 ) -> tuple[list[dict], int]:
-    """Find _private symbols imported across module boundaries."""
-    del file_finder, path
+    """Process a batch of files for cross-module private import entries."""
     entries: list[dict] = []
     files_checked = 0
-    project_files = set(dep_graph.keys()) if dep_graph else set()
 
-    for filepath in dep_graph:
+    for filepath in files:
         if not filepath.endswith(".py"):
             continue
         if _is_test_file(filepath):
@@ -133,6 +135,40 @@ def detect_private_imports(
                                 },
                             }
                         )
+
+    return entries, files_checked
+
+
+def detect_private_imports(
+    dep_graph: dict,
+    zone_map=None,
+    file_finder=None,
+    path: Path | None = None,
+) -> tuple[list[dict], int]:
+    """Find _private symbols imported across module boundaries."""
+    del file_finder, path
+    project_files = set(dep_graph.keys()) if dep_graph else set()
+    batch_results = process_files_parallel(
+        files=list(dep_graph.keys()),
+        worker_func=_private_imports_batch_worker,
+        mode="extend",
+        min_files=_PRIVATE_IMPORTS_PARALLEL_MIN_FILES,
+        task_name="python private imports",
+        max_retries=1,
+        dep_graph=dep_graph,
+        zone_map=zone_map,
+        project_files=project_files,
+    )
+
+    if isinstance(batch_results, tuple) and len(batch_results) == 2:
+        direct_entries, direct_files_checked = batch_results
+        return list(direct_entries), int(direct_files_checked)
+
+    entries: list[dict] = []
+    files_checked = 0
+    for batch_entries, batch_files_checked in batch_results:
+        entries.extend(batch_entries)
+        files_checked += batch_files_checked
 
     return entries, files_checked
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from desloppify.base.output.fallbacks import log_best_effort_failure
 from desloppify.base.discovery.file_paths import resolve_scan_file
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,6 @@
 """Tests for desloppify.engine.detectors.signature — detect_signature_variance."""
 
+import desloppify.engine.detectors.signature as signature_mod
 from desloppify.engine.detectors.base import FunctionInfo
 from desloppify.engine.detectors.signature import _ALLOWLIST, detect_signature_variance
 
@@ -259,3 +260,36 @@ def test_variants_contain_correct_detail():
     assert a_variant["line"] == 10
     assert a_variant["params"] == ["data"]
     assert a_variant["param_count"] == 1
+
+
+def test_signature_parallel_path_used_for_large_group_sets(monkeypatch):
+    functions = []
+    for i in range(signature_mod._SIGNATURE_PARALLEL_MIN_GROUPS):
+        name = f"handler_{i}"
+        functions.extend(
+            [
+                _fn(name, f"a_{i}.py", ["data"]),
+                _fn(name, f"b_{i}.py", ["data", "opts"]),
+                _fn(name, f"c_{i}.py", ["data"]),
+            ]
+        )
+
+    called: dict[str, str] = {}
+
+    def fake_parallel(**kwargs):
+        called["task_name"] = kwargs["task_name"]
+        worker = kwargs["worker_func"]
+        worker_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k not in {"files", "worker_func", "mode", "min_files", "task_name"}
+        }
+        return worker(kwargs["files"], **worker_kwargs)
+
+    monkeypatch.setattr(signature_mod, "process_files_parallel", fake_parallel)
+
+    entries, total = detect_signature_variance(functions)
+
+    assert called["task_name"] == "signature variance analysis"
+    assert total == len(functions)
+    assert len(entries) == signature_mod._SIGNATURE_PARALLEL_MIN_GROUPS

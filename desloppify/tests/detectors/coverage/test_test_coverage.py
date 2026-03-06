@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import math
+import re
+from types import SimpleNamespace
 
 import pytest
 
 import desloppify.languages.typescript.test_coverage as ts_cov
+import desloppify.engine.detectors.coverage.mapping as mapping_mod
+import desloppify.engine.detectors.coverage.mapping_analysis as mapping_analysis_mod
+import desloppify.engine.detectors.test_coverage.detector as coverage_detector_mod
+from desloppify.engine.parallel_utils import batch_items
 from desloppify.engine.detectors.coverage.mapping import (
     _infer_lang_name,
     _map_test_to_source,
@@ -1758,3 +1764,293 @@ class TestHasTestableLogic:
         entries, _ = detect_test_coverage(graph, zone_map, "typescript")
         assert len(entries) == 1
         assert entries[0]["detail"]["kind"] == "runtime_entrypoint_no_direct_tests"
+
+
+class TestCoverageParallelPaths:
+    @staticmethod
+    def _patch_parallel(monkeypatch, module):
+        calls = {"count": 0}
+
+        def _spy(*args, **kwargs):
+            calls["count"] += 1
+            files = kwargs.get("files", args[0] if args else [])
+            worker_func = kwargs.get("worker_func", args[1] if len(args) > 1 else None)
+            worker_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key
+                not in {
+                    "files",
+                    "worker_func",
+                    "mode",
+                    "min_files",
+                    "force_parallel",
+                    "timeout",
+                    "task_name",
+                    "max_retries",
+                    "fail_on_incomplete",
+                }
+            }
+            return worker_func(files, **worker_kwargs)
+
+        monkeypatch.setattr(module, "process_files_parallel", _spy)
+        return calls
+
+    def test_mapping_build_prod_module_index_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_mod)
+        production_files = {f"src/mod_{index}.py" for index in range(130)}
+        result = mapping_mod._build_prod_module_index(production_files)
+        assert calls["count"] >= 1
+        assert "src.mod_0" in result
+
+    def test_mapping_graph_tested_imports_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_mod)
+        test_files = {f"tests/test_{index}.py" for index in range(130)}
+        production_files = {f"src/mod_{index}.py" for index in range(130)}
+        graph = {
+            test_file: {"imports": {f"src/mod_{index}.py"}}
+            for index, test_file in enumerate(sorted(test_files))
+        }
+        result = mapping_mod._graph_tested_imports(
+            graph,
+            test_files,
+            production_files,
+            {f"src.mod_{index}": f"src/mod_{index}.py" for index in range(130)},
+            "python",
+        )
+        assert calls["count"] >= 1
+        assert result
+
+    def test_mapping_expand_barrel_targets_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_mod)
+        monkeypatch.setattr(
+            mapping_mod,
+            "_resolve_barrel_reexports",
+            lambda filepath, _production, _lang: {filepath.replace("index", "impl")},
+        )
+        tested = {f"pkg_{index}/index.py" for index in range(130)}
+        result = mapping_mod._expand_barrel_targets(
+            tested=tested,
+            barrel_basenames={"index.py"},
+            production_files={f"pkg_{index}/impl.py" for index in range(130)},
+            lang_name="python",
+        )
+        assert calls["count"] >= 1
+        assert any(path.endswith("impl.py") for path in result)
+
+    def test_mapping_expand_facade_targets_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_mod)
+        tested = {f"src/mod_{index}.py" for index in range(130)}
+        production = {f"src/dep_{index}.py" for index in range(130)}
+        graph = {
+            f"src/mod_{index}.py": {"imports": {f"src/dep_{index}.py"}}
+            for index in range(130)
+        }
+        monkeypatch.setattr(
+            mapping_mod,
+            "read_coverage_file",
+            lambda *_args, **_kwargs: SimpleNamespace(ok=True, content="export * from './x'"),
+        )
+        result = mapping_mod._expand_facade_targets(
+            tested=tested,
+            graph=graph,
+            production_files=production,
+            has_logic=lambda *_args, **_kwargs: False,
+        )
+        assert calls["count"] >= 1
+        assert result
+
+    def test_mapping_naming_based_mapping_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_mod)
+        production_files = {f"src/mod_{index}.py" for index in range(130)}
+        test_files = {f"tests/test_mod_{index}.py" for index in range(130)}
+        result = mapping_mod.naming_based_mapping(
+            test_files,
+            production_files,
+            "python",
+        )
+        assert calls["count"] >= 2
+        assert result
+
+    def test_mapping_analysis_analyze_test_quality_core_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_analysis_mod)
+        test_files = {f"tests/test_{index}.py" for index in range(130)}
+        fake_mod = SimpleNamespace(
+            ASSERT_PATTERNS=[re.compile(r"\bassert\b")],
+            MOCK_PATTERNS=[re.compile(r"\bmock\b")],
+            SNAPSHOT_PATTERNS=[re.compile(r"snapshot")],
+            TEST_FUNCTION_RE=re.compile(r"def\s+test_", re.MULTILINE),
+            strip_comments=lambda text: text,
+            is_placeholder_test=lambda *_args, **_kwargs: False,
+        )
+        result = mapping_analysis_mod.analyze_test_quality_core(
+            test_files,
+            "python",
+            load_lang_module=lambda _name: fake_mod,
+            read_coverage_file_fn=lambda *_args, **_kwargs: SimpleNamespace(
+                ok=True, content="def test_x():\n    assert True\n"
+            ),
+            logger=mapping_analysis_mod.logging.getLogger("test"),
+        )
+        assert calls["count"] >= 1
+        assert result
+
+    def test_mapping_analysis_build_prod_by_module_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_analysis_mod)
+        production_files = {f"src/mod_{index}.py" for index in range(130)}
+        result = mapping_analysis_mod._build_prod_by_module(
+            production_files,
+            project_root="src",
+        )
+        assert calls["count"] >= 1
+        assert result
+
+    def test_mapping_analysis_get_test_files_for_prod_core_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_analysis_mod)
+        test_files = {f"tests/test_{index}.py" for index in range(130)}
+        graph = {test_path: {"imports": {"src/prod.py"}} for test_path in test_files}
+        result = mapping_analysis_mod.get_test_files_for_prod_core(
+            "src/prod.py",
+            test_files,
+            graph,
+            "python",
+            parsed_imports_by_test={},
+            parse_test_imports_fn=lambda *_args, **_kwargs: {"src/prod.py"},
+            map_test_to_source_fn=lambda *_args, **_kwargs: "src/prod.py",
+            project_root="src",
+        )
+        assert calls["count"] >= 1
+        assert len(result) == len(test_files)
+
+    def test_mapping_analysis_build_test_import_index_core_parallel(self, monkeypatch):
+        calls = self._patch_parallel(monkeypatch, mapping_analysis_mod)
+        test_files = {f"tests/test_{index}.py" for index in range(130)}
+        result = mapping_analysis_mod.build_test_import_index_core(
+            test_files,
+            {"src/prod.py"},
+            "python",
+            parse_test_imports_fn=lambda *_args, **_kwargs: {"src/prod.py"},
+            project_root="src",
+        )
+        assert calls["count"] >= 1
+        assert len(result) == len(test_files)
+
+
+class TestCoverageBatchPartitioning:
+    def test_balanced_batch_plan_reduces_predicted_workload_spread(self):
+        scorable = [f"src/module_{index}.py" for index in range(120)]
+        directly_tested = set(scorable[:20])
+        transitively_tested = set(scorable[20:60])
+        graph = {
+            filepath: {
+                "importer_count": 300 if idx < 20 else (120 if idx < 60 else 5),
+                "imports": set(),
+            }
+            for idx, filepath in enumerate(scorable)
+        }
+        complexity_map = {
+            filepath: 30.0 if idx < 20 else (12.0 if idx < 60 else 1.0)
+            for idx, filepath in enumerate(scorable)
+        }
+
+        planned = coverage_detector_mod._plan_balanced_issue_generation_batches(
+            scorable,
+            graph=graph,
+            directly_tested=directly_tested,
+            transitively_tested=transitively_tested,
+            complexity_map=complexity_map,
+            worker_count=4,
+        )
+        naive = batch_items(scorable, 4)
+
+        def _batch_weight(batch):
+            return sum(
+                coverage_detector_mod._estimate_issue_generation_weight(
+                    filepath,
+                    graph=graph,
+                    directly_tested=directly_tested,
+                    transitively_tested=transitively_tested,
+                    complexity_map=complexity_map,
+                )
+                for filepath in batch
+            )
+
+        planned_weights = [_batch_weight(batch) for batch in planned]
+        naive_weights = [_batch_weight(batch) for batch in naive]
+
+        assert set(filepath for batch in planned for filepath in batch) == set(scorable)
+        assert sorted(len(batch) for batch in planned) == sorted(len(batch) for batch in naive)
+        assert max(planned_weights) - min(planned_weights) < max(naive_weights) - min(naive_weights)
+
+    def test_detect_test_coverage_parallel_uses_balanced_ordering(self, monkeypatch):
+        scorable = {f"src/module_{index}.py" for index in range(12)}
+        production_files = set(scorable)
+        test_files = {"tests/test_mod.py"}
+        graph = {
+            filepath: {
+                "imports": set(),
+                "importer_count": 100 if filepath.endswith(("0.py", "1.py", "2.py")) else 1,
+            }
+            for filepath in scorable
+        }
+
+        monkeypatch.setattr(coverage_detector_mod, "_TEST_COVERAGE_PARALLEL_MIN_FILES", 1)
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "_discover_scorable_and_tests",
+            lambda **_kwargs: (production_files, test_files, scorable, 10_000),
+        )
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "import_based_mapping",
+            lambda *_args, **_kwargs: {"src/module_0.py", "src/module_1.py", "src/module_2.py"},
+        )
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "naming_based_mapping",
+            lambda *_args, **_kwargs: set(),
+        )
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "transitive_coverage",
+            lambda *_args, **_kwargs: {"src/module_3.py", "src/module_4.py"},
+        )
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "analyze_test_quality",
+            lambda *_args, **_kwargs: {
+                "tests/test_mod.py": {
+                    "quality": "adequate",
+                    "test_functions": 1,
+                    "assertions": 1,
+                    "mocks": 0,
+                    "snapshots": 0,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            coverage_detector_mod,
+            "build_test_import_index",
+            lambda *_args, **_kwargs: {},
+        )
+
+        captured: dict[str, list[str]] = {}
+
+        def _spy_parallel(*args, **kwargs):
+            captured["files"] = list(kwargs.get("files", args[0] if args else []))
+            return []
+
+        monkeypatch.setattr(coverage_detector_mod, "process_files_parallel", _spy_parallel)
+
+        entries, potential = coverage_detector_mod.detect_test_coverage(
+            graph,
+            _make_zone_map(sorted(scorable | test_files)),
+            "python",
+            complexity_map={filepath: 40.0 if filepath.endswith(("0.py", "1.py", "2.py")) else 1.0 for filepath in scorable},
+        )
+
+        assert entries == []
+        assert potential == 10_000
+        assert set(captured["files"]) == scorable
+        assert captured["files"] != sorted(scorable)
+

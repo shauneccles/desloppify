@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import atexit
 import concurrent.futures
 import os
 import pickle
-import threading
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +31,7 @@ from desloppify.engine.detectors.review_coverage import (
     detect_holistic_review_staleness,
     detect_review_coverage,
 )
+from desloppify.engine.parallel_utils import persistent_parallel_pool
 from desloppify.engine.detectors.security.detector import detect_security_issues
 from desloppify.engine.detectors.single_use import detect_single_use_abstractions
 from desloppify.engine.detectors.test_coverage.detector import detect_test_coverage
@@ -59,10 +57,7 @@ from desloppify.languages._framework.issue_factories import (
 )
 from desloppify.state import Issue, make_issue
 
-_COUPLING_FANOUT_MIN_GRAPH_SIZE = 1000
-_PHASE_PROCESS_POOL: ProcessPoolExecutor | None = None
-_PHASE_PROCESS_POOL_WORKERS: int = 0
-_PHASE_PROCESS_POOL_LOCK = threading.Lock()
+_COUPLING_FANOUT_MIN_GRAPH_SIZE = 500
 
 
 def _phase_pool_worker_count(min_workers: int = 2) -> int:
@@ -76,38 +71,6 @@ def _phase_pool_worker_count(min_workers: int = 2) -> int:
             pass
     cpu_count = os.cpu_count() or 1
     return max(min_workers, cpu_count - 1)
-
-
-def _shutdown_phase_process_pool() -> None:
-    global _PHASE_PROCESS_POOL
-    global _PHASE_PROCESS_POOL_WORKERS
-    with _PHASE_PROCESS_POOL_LOCK:
-        executor = _PHASE_PROCESS_POOL
-        _PHASE_PROCESS_POOL = None
-        _PHASE_PROCESS_POOL_WORKERS = 0
-    if executor is not None:
-        executor.shutdown(wait=True)
-
-
-def _get_phase_process_pool(*, min_workers: int = 2) -> ProcessPoolExecutor:
-    global _PHASE_PROCESS_POOL
-    global _PHASE_PROCESS_POOL_WORKERS
-    requested = _phase_pool_worker_count(min_workers=min_workers)
-
-    with _PHASE_PROCESS_POOL_LOCK:
-        executor = _PHASE_PROCESS_POOL
-        if executor is not None and _PHASE_PROCESS_POOL_WORKERS >= requested:
-            return executor
-
-        if executor is not None:
-            executor.shutdown(wait=True)
-
-        _PHASE_PROCESS_POOL = ProcessPoolExecutor(max_workers=requested)
-        _PHASE_PROCESS_POOL_WORKERS = requested
-        return _PHASE_PROCESS_POOL
-
-
-atexit.register(_shutdown_phase_process_pool)
 
 
 def _should_use_coupling_process_fanout(graph_size: int) -> bool:
@@ -137,14 +100,6 @@ def _detect_orphaned_task(
     options: OrphanedDetectionOptions,
 ) -> tuple[list[dict], int]:
     return detect_orphaned_files(path, graph, extensions=extensions, options=options)
-
-
-def _run_lang_security_detector_task(
-    detector_fn,
-    files: list[str],
-    zone_map,
-):
-    return detector_fn(files, zone_map)
 
 
 def phase_dupes(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], dict[str, int]]:
@@ -379,31 +334,26 @@ def phase_security(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], 
     zone_map = lang.zone_map
     files = lang.file_finder(path) if lang.file_finder else []
     try:
-        executor = _get_phase_process_pool(min_workers=2)
-        cross_lang_future = executor.submit(
-            detect_security_issues,
-            files,
-            zone_map,
-            lang.name,
-            scan_root=path,
-        )
-        lang_specific_future = executor.submit(
-            _run_lang_security_detector_task,
-            lang.detect_lang_security_detailed,
-            files,
-            zone_map,
-        )
-        entries, cross_lang_scanned = cross_lang_future.result()
-        lang_result = lang_specific_future.result()
+        with persistent_parallel_pool(max_workers=_phase_pool_worker_count(min_workers=2)) as executor:
+            cross_lang_future = executor.submit(
+                detect_security_issues,
+                files,
+                zone_map,
+                lang.name,
+                scan_root=path,
+            )
+            entries, cross_lang_scanned = cross_lang_future.result()
+        lang_result = lang.detect_lang_security_detailed(files, zone_map)
     except (
         OSError,
         RuntimeError,
-        TypeError,
-        AttributeError,
         pickle.PicklingError,
         concurrent.futures.process.BrokenProcessPool,
-    ):
-        _shutdown_phase_process_pool()
+    ) as exc:
+        log(
+            "         security fanout fallback: "
+            f"{exc.__class__.__name__}; running sequentially"
+        )
         entries, cross_lang_scanned = detect_security_issues(
             files,
             zone_map,
@@ -414,8 +364,6 @@ def phase_security(path: Path, lang: LangRuntimeContract) -> tuple[list[Issue], 
 
     lang_scanned = 0
 
-    # Also call lang-specific security detectors.
-    lang_result = lang.detect_lang_security_detailed(files, zone_map)
     lang_entries = lang_result.entries
     lang_scanned = max(0, int(lang_result.files_scanned))
     _record_detector_coverage(lang, lang_result.coverage)
@@ -702,35 +650,39 @@ def run_coupling_phase(
     )
 
     if _should_use_coupling_process_fanout(len(graph)):
+        log_fn(
+            f"         coupling fanout: process pool enabled ({len(graph)} graph files)"
+        )
         try:
-            executor = _get_phase_process_pool(min_workers=3)
-            single_future = executor.submit(
-                _detect_single_use_task,
-                path,
-                graph,
-                lang.barrel_names,
-            )
-            cycles_future = executor.submit(_detect_cycles_task, graph)
-            orphan_future = executor.submit(
-                _detect_orphaned_task,
-                path,
-                graph,
-                lang.extensions,
-                orphaned_options,
-            )
+            with persistent_parallel_pool(max_workers=_phase_pool_worker_count(min_workers=3)) as executor:
+                single_future = executor.submit(
+                    _detect_single_use_task,
+                    path,
+                    graph,
+                    lang.barrel_names,
+                )
+                cycles_future = executor.submit(_detect_cycles_task, graph)
+                orphan_future = executor.submit(
+                    _detect_orphaned_task,
+                    path,
+                    graph,
+                    lang.extensions,
+                    orphaned_options,
+                )
 
-            single_entries, single_candidates = single_future.result()
-            cycle_entries, _ = cycles_future.result()
-            orphan_entries, total_graph_files = orphan_future.result()
+                single_entries, single_candidates = single_future.result()
+                cycle_entries, _ = cycles_future.result()
+                orphan_entries, total_graph_files = orphan_future.result()
         except (
             OSError,
             RuntimeError,
-            TypeError,
-            AttributeError,
             pickle.PicklingError,
             concurrent.futures.process.BrokenProcessPool,
-        ):
-            _shutdown_phase_process_pool()
+        ) as exc:
+            log(
+                "         coupling fanout fallback: "
+                f"{exc.__class__.__name__}; running sequentially"
+            )
             single_entries, single_candidates = detect_single_use_abstractions(
                 path,
                 graph,

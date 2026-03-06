@@ -77,7 +77,7 @@ def resolve_detection_root(
     marker_provider: Callable[[], tuple[str, ...]] | None = None,
 ) -> Path:
     """Best root to auto-detect language from."""
-    project_root = project_root or PROJECT_ROOT
+    project_root = project_root or get_project_root()
     marker_provider = marker_provider or _lang_config_markers
     markers = marker_provider()
     root = project_root if project_root is not None else get_project_root()

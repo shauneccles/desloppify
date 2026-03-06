@@ -9,6 +9,7 @@ from pathlib import Path
 
 from desloppify.base.discovery.source import find_py_files
 from desloppify.base.discovery.paths import get_project_root
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +218,7 @@ def _process_mutable_file(filepath: str) -> tuple[list[dict], str | None, set[st
         p = (
             Path(filepath)
             if Path(filepath).is_absolute()
-            else PROJECT_ROOT / filepath
+            else get_project_root() / filepath
         )
         content = p.read_text()
     except (OSError, UnicodeDecodeError) as exc:
@@ -288,7 +289,7 @@ def _process_stale_import_file(filepath: str, mutated_names: dict[str, set[str]]
         p = (
             Path(filepath)
             if Path(filepath).is_absolute()
-            else PROJECT_ROOT / filepath
+            else get_project_root() / filepath
         )
         content = p.read_text()
     except (OSError, UnicodeDecodeError) as exc:
@@ -350,76 +351,6 @@ def _stale_import_batch_worker(files: list[str], mutated_names: dict[str, set[st
     return results
 
 
-def _detect_stale_imports(
-    path: Path,
-    mutated_names: dict[str, set[str]],
-    entries: list[dict],
-):
-    """Detect ``from X import mutable_name`` that creates a stale binding.
-
-    When a module-level mutable is reassigned (via ``global``), other modules
-    that import the name directly get a stale copy.  They should import the
-    module and access the attribute at call time instead.
-    """
-    files = find_py_files(path)
-
-    for filepath in files:
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable python file %s in stale-import pass: %s",
-                filepath,
-                exc,
-            )
-            continue
-
-        try:
-            tree = ast.parse(content, filename=filepath)
-        except SyntaxError as exc:
-            logger.debug(
-                "Skipping unparseable python file %s in stale-import pass: %s",
-                filepath,
-                exc,
-            )
-            continue
-
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            module = node.module or ""
-            # Check if any imported name is a mutated global in the source module
-            for source_module, names in mutated_names.items():
-                # Match by suffix (e.g., "desloppify.utils" matches "from .utils import")
-                if not (
-                    module == source_module
-                    or module.endswith(f".{source_module}")
-                    or source_module.endswith(f".{module}")
-                ):
-                    continue
-                for alias in node.names:
-                    if alias.name in names:
-                        entries.append(
-                            {
-                                "file": filepath,
-                                "name": alias.name,
-                                "line": node.lineno,
-                                "mutation_lines": [],
-                                "mutation_count": 0,
-                                "confidence": "high",
-                                "summary": (
-                                    f"'from {module} import {alias.name}' creates stale binding — "
-                                    f"'{alias.name}' is reassigned at runtime. Import the module instead."
-                                ),
-                            }
-                        )
-
-
 def detect_global_mutable_config(path: Path) -> tuple[list[dict], int]:
     """Detect module-level mutable state that gets modified from functions.
 
@@ -429,6 +360,8 @@ def detect_global_mutable_config(path: Path) -> tuple[list[dict], int]:
     Returns (entries, total_files_checked).
     """
     files = find_py_files(path)
+    if not files:
+        return [], 0
 
     # Phase 1: collect mutated globals per module using parallel processing
     # Returns list of (entries, mutated_names) tuples from each worker
@@ -445,59 +378,26 @@ def detect_global_mutable_config(path: Path) -> tuple[list[dict], int]:
 
     # Phase 1: collect mutated globals per module
     mutated_names: dict[str, set[str]] = {}  # {module_path: {name, ...}}
-
-    for filepath in files:
-        try:
-            p = (
-                Path(filepath)
-                if Path(filepath).is_absolute()
-                else get_project_root() / filepath
-            )
-            content = p.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.debug(
-                "Skipping unreadable python file %s in mutable-state pass: %s",
-                filepath,
-                exc,
-            )
-            continue
-
-        try:
-            tree = ast.parse(content, filename=filepath)
-        except SyntaxError as exc:
-            logger.debug(
-                "Skipping unparseable python file %s in mutable-state pass: %s",
-                filepath,
-                exc,
-            )
-            continue
-
-        _detect_in_module(filepath, tree, entries)
-
-        # Track which modules have reassigned globals (need `global` keyword)
-        mutables = _collect_module_level_mutables(tree)
-        if mutables:
-            # Only track names that are reassigned (not just mutated via methods)
-            reassigned = set()
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    continue
-                global_names: set[str] = set()
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Global):
-                        global_names.update(child.names)
-                for name in global_names:
-                    if name in mutables:
-                        reassigned.add(name)
-            if reassigned:
-                # Convert filepath to dotted module path
-                module_path = filepath.replace("/", ".").replace("\\", ".")
-                if module_path.endswith(".py"):
-                    module_path = module_path[:-3]
-                mutated_names[module_path] = reassigned
+    normalized_phase1 = phase1_results if isinstance(phase1_results, list) else [phase1_results]
+    for file_entries, batch_mutated_names in normalized_phase1:
+        entries.extend(file_entries)
+        for module_path, reassigned_names in batch_mutated_names.items():
+            target = mutated_names.setdefault(module_path, set())
+            target.update(reassigned_names)
 
     # Phase 2: detect stale import bindings
     if mutated_names:
-        _detect_stale_imports(path, mutated_names, entries)
+        stale_results = process_files_parallel(
+            files=files,
+            worker_func=_stale_import_batch_worker,
+            mode="extend",
+            min_files=100,
+            task_name="mutable state detection (phase 2)",
+            mutated_names=mutated_names,
+        )
+        if isinstance(stale_results, list):
+            entries.extend(stale_results)
+        elif isinstance(stale_results, dict):
+            entries.extend(stale_results.get("entries", []))
 
     return entries, len(files)

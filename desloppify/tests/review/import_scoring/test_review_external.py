@@ -90,9 +90,9 @@ def test_external_submit_rejects_missing_session_metadata(tmp_path, monkeypatch)
         "packet_sha256": hashlib.sha256(blind.read_bytes()).hexdigest(),
     }
     session_path = session_dir / "session.json"
-    session_path.write_text(json.dumps(session_payload))
+    session_path.write_text(orjson.dumps(session_payload).decode("utf-8"))
     issues = tmp_path / "issues.json"
-    issues.write_text(json.dumps({"assessments": {"naming_quality": 100}, "issues": []}))
+    issues.write_text(orjson.dumps({"assessments": {"naming_quality": 100}, "issues": []}).decode("utf-8"))
 
     monkeypatch.setattr(runtime_paths_mod, "EXTERNAL_SESSION_ROOT", tmp_path / "sessions")
     lang = MagicMock()
@@ -127,10 +127,10 @@ def test_external_submit_canonicalizes_and_imports(tmp_path, monkeypatch):
         "packet_sha256": hashlib.sha256(blind.read_bytes()).hexdigest(),
     }
     session_path = session_dir / "session.json"
-    session_path.write_text(json.dumps(session_payload))
+    session_path.write_text(orjson.dumps(session_payload).decode("utf-8"))
     issues = tmp_path / "issues.json"
     issues.write_text(
-        json.dumps(
+        orjson.dumps(
             {
                 "session": {"id": "ext_x", "token": "secret-token"},
                 "provenance": {"kind": "fake"},
@@ -191,10 +191,10 @@ def test_external_submit_dry_run_uses_validate_import(tmp_path, monkeypatch):
         "blind_packet_path": str(blind),
         "packet_sha256": hashlib.sha256(blind.read_bytes()).hexdigest(),
     }
-    (session_dir / "session.json").write_text(json.dumps(session_payload))
+    (session_dir / "session.json").write_text(orjson.dumps(session_payload).decode("utf-8"))
     issues = tmp_path / "issues.json"
     issues.write_text(
-        json.dumps(
+        orjson.dumps(
             {
                 "session": {"id": "ext_x", "token": "secret-token"},
                 "assessments": {"naming_quality": 100},
@@ -309,9 +309,9 @@ def test_external_start_template_has_dimension_notes(tmp_path, monkeypatch):
     packet_path = tmp_path / "packets" / "packet.json"
     blind_path = tmp_path / "packets" / "review_packet_blind.json"
     packet_path.parent.mkdir(parents=True, exist_ok=True)
-    packet_path.write_text(json.dumps({"ok": True}))
+    packet_path.write_text(orjson.dumps({"ok": True}).decode("utf-8"))
     blind_payload = {"command": "review", "dimensions": ["naming_quality"]}
-    blind_path.write_text(json.dumps(blind_payload))
+    blind_path.write_text(orjson.dumps(blind_payload).decode("utf-8"))
 
     monkeypatch.setattr(
         external_mod,
@@ -333,6 +333,6 @@ def test_external_start_template_has_dimension_notes(tmp_path, monkeypatch):
 
     template_files = list((tmp_path / "sessions").glob("*/review_result.template.json"))
     assert len(template_files) == 1
-    template = json.loads(template_files[0].read_text())
+    template = orjson.loads(template_files[0].read_text())
     assert "dimension_notes" in template
     assert template["dimension_notes"] == {}

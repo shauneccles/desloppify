@@ -15,8 +15,11 @@ from desloppify.engine.detectors.coverage.mapping_analysis import (
 )
 from desloppify.engine.detectors.test_coverage.io import read_coverage_file
 from desloppify.engine.hook_registry import get_lang_hook
+from desloppify.engine.parallel_utils import process_files_parallel
 
 logger = logging.getLogger(__name__)
+
+_COVERAGE_MAPPING_PARALLEL_MIN_FILES = 120
 
 
 def _load_lang_test_coverage_module(lang_name: str | None):
@@ -37,8 +40,8 @@ def _infer_lang_name(test_files: set[str], production_files: set[str]) -> str | 
         ".cs": "csharp",
     }
     counts: dict[str, int] = {}
-    for file_path in paths:
-        suffix = Path(file_path).suffix.lower()
+    for filepath in paths:
+        suffix = Path(filepath).suffix.lower()
         lang_name = ext_to_lang.get(suffix)
         if not lang_name:
             continue
@@ -50,23 +53,16 @@ def _infer_lang_name(test_files: set[str], production_files: set[str]) -> str | 
 
 def _build_prod_module_index(production_files: set[str]) -> dict[str, str]:
     """Build a mapping from module basename/dotted-path to full file path."""
-    prod_by_module: dict[str, str] = {}
     root_str = str(get_project_root()) + os.sep
-    for pf in production_files:
-        rel_pf = pf[len(root_str) :] if pf.startswith(root_str) else pf
-        module_name = rel_pf.replace("/", ".").replace("\\", ".")
-        if "." in module_name:
-            module_name = module_name.rsplit(".", 1)[0]
-        prod_by_module[module_name] = pf
-
-        # __init__.py: also map package path (e.g. "foo.bar" -> __init__.py).
-        if module_name.endswith(".__init__"):
-            prod_by_module[module_name[: -len(".__init__")]] = pf
-
-        parts = module_name.split(".")
-        if parts:
-            prod_by_module[parts[-1]] = pf
-    return prod_by_module
+    return dict(process_files_parallel(
+        files=list(production_files),
+        worker_func=_build_prod_module_index_batch_worker,
+        mode="dict_merge",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage prod module map",
+        max_retries=1,
+        root_str=root_str,
+    ))
 
 
 def _graph_tested_imports(
@@ -77,24 +73,19 @@ def _graph_tested_imports(
     lang_name: str | None,
 ) -> set[str]:
     """Follow import graph edges from test files to find directly-tested production files."""
-    tested: set[str] = set()
-    for tf in test_files:
-        entry = graph.get(tf)
-        graph_mapped: set[str] = set()
-        if entry is not None:
-            for imp in entry.get("imports", set()):
-                if imp in production_files:
-                    graph_mapped.add(imp)
-            tested |= graph_mapped
-
-        # Parse source imports as a supplement when graph imports are absent,
-        # or always for TypeScript where dynamic import('...') is common in
-        # coverage smoke tests and may be missed by static graph building.
-        if not graph_mapped or lang_name == "typescript":
-            tested |= _parse_test_imports(
-                tf, production_files, prod_by_module, lang_name
-            )
-    return tested
+    batch_sets = process_files_parallel(
+        files=list(test_files),
+        worker_func=_graph_tested_imports_batch_worker,
+        mode="extend",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage graph tested imports",
+        max_retries=1,
+        graph=graph,
+        production_files=production_files,
+        prod_by_module=prod_by_module,
+        lang_name=lang_name,
+    )
+    return set(batch_sets)
 
 
 def _expand_barrel_targets(
@@ -105,11 +96,18 @@ def _expand_barrel_targets(
     lang_name: str | None,
 ) -> set[str]:
     """Expand barrel/index file imports to the actual modules they re-export."""
-    extra: set[str] = set()
     barrel_files = [f for f in tested if os.path.basename(f) in barrel_basenames]
-    for bf in barrel_files:
-        extra |= _resolve_barrel_reexports(bf, production_files, lang_name)
-    return extra
+    batch_sets = process_files_parallel(
+        files=barrel_files,
+        worker_func=_expand_barrel_targets_batch_worker,
+        mode="extend",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage barrel expansion",
+        max_retries=1,
+        production_files=production_files,
+        lang_name=lang_name,
+    )
+    return set(batch_sets)
 
 
 def _expand_facade_targets(
@@ -126,22 +124,18 @@ def _expand_facade_targets(
     "transitive_only" issues for internal modules behind facades like
     scoring.py -> _scoring/policy/core.py.
     """
-    facade_targets: set[str] = set()
-    for f in list(tested):
-        entry = graph.get(f)
-        if entry is None:
-            continue
-        read_result = read_coverage_file(
-            f, context="coverage_import_mapping_facade_logic"
-        )
-        if not read_result.ok:
-            continue
-        content = read_result.content
-        if not has_logic(f, content):
-            for imp in entry.get("imports", set()):
-                if imp in production_files:
-                    facade_targets.add(imp)
-    return facade_targets
+    batch_sets = process_files_parallel(
+        files=list(tested),
+        worker_func=_expand_facade_targets_batch_worker,
+        mode="extend",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage facade expansion",
+        max_retries=1,
+        graph=graph,
+        production_files=production_files,
+        has_logic=has_logic,
+    )
+    return set(batch_sets)
 
 
 def import_based_mapping(
@@ -271,22 +265,27 @@ def naming_based_mapping(
     """Map test files to production files by naming conventions."""
     tested = set()
 
-    prod_by_basename: dict[str, list[str]] = {}
-    for p in production_files:
-        bn = os.path.basename(p)
-        prod_by_basename.setdefault(bn, []).append(p)
+    prod_by_basename = dict(process_files_parallel(
+        files=list(production_files),
+        worker_func=_naming_prod_index_batch_worker,
+        mode="dict_merge",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage naming prod index",
+        max_retries=1,
+    ))
 
-    for tf in test_files:
-        matched = _map_test_to_source(tf, production_files, lang_name)
-        if matched:
-            tested.add(matched)
-            continue
-
-        basename = os.path.basename(tf)
-        src_name = _strip_test_markers(basename, lang_name)
-        if src_name and src_name in prod_by_basename:
-            for p in prod_by_basename[src_name]:
-                tested.add(p)
+    mapped = process_files_parallel(
+        files=list(test_files),
+        worker_func=_naming_map_tests_batch_worker,
+        mode="extend",
+        min_files=_COVERAGE_MAPPING_PARALLEL_MIN_FILES,
+        task_name="coverage naming map tests",
+        max_retries=1,
+        production_files=production_files,
+        lang_name=lang_name,
+        prod_by_basename=prod_by_basename,
+    )
+    tested |= set(mapped)
 
     return tested
 
@@ -356,3 +355,114 @@ def build_test_import_index(
         parse_test_imports_fn=_parse_test_imports,
         project_root=str(get_project_root()),
     )
+
+
+def _build_prod_module_index_batch_worker(
+    files: list[str],
+    *,
+    root_str: str,
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for pf in files:
+        rel_pf = pf[len(root_str) :] if pf.startswith(root_str) else pf
+        module_name = rel_pf.replace("/", ".").replace("\\", ".")
+        if "." in module_name:
+            module_name = module_name.rsplit(".", 1)[0]
+        result[module_name] = pf
+        if module_name.endswith(".__init__"):
+            result[module_name[: -len(".__init__")]] = pf
+        parts = module_name.split(".")
+        if parts:
+            result[parts[-1]] = pf
+    return result
+
+
+def _graph_tested_imports_batch_worker(
+    files: list[str],
+    *,
+    graph: dict,
+    production_files: set[str],
+    prod_by_module: dict[str, str],
+    lang_name: str | None,
+) -> list[str]:
+    tested: set[str] = set()
+    for tf in files:
+        entry = graph.get(tf)
+        graph_mapped: set[str] = set()
+        if entry is not None:
+            for imp in entry.get("imports", set()):
+                if imp in production_files:
+                    graph_mapped.add(imp)
+            tested |= graph_mapped
+        if not graph_mapped or lang_name == "typescript":
+            tested |= _parse_test_imports(
+                tf, production_files, prod_by_module, lang_name
+            )
+    return list(tested)
+
+
+def _expand_barrel_targets_batch_worker(
+    files: list[str],
+    *,
+    production_files: set[str],
+    lang_name: str | None,
+) -> list[str]:
+    extra: set[str] = set()
+    for bf in files:
+        extra |= _resolve_barrel_reexports(bf, production_files, lang_name)
+    return list(extra)
+
+
+def _expand_facade_targets_batch_worker(
+    files: list[str],
+    *,
+    graph: dict,
+    production_files: set[str],
+    has_logic,
+) -> list[str]:
+    facade_targets: set[str] = set()
+    for f in files:
+        entry = graph.get(f)
+        if entry is None:
+            continue
+        read_result = read_coverage_file(
+            f, context="coverage_import_mapping_facade_logic"
+        )
+        if not read_result.ok:
+            continue
+        content = read_result.content
+        if not has_logic(f, content):
+            for imp in entry.get("imports", set()):
+                if imp in production_files:
+                    facade_targets.add(imp)
+    return list(facade_targets)
+
+
+def _naming_prod_index_batch_worker(files: list[str]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for production_file in files:
+        basename = os.path.basename(production_file)
+        result.setdefault(basename, []).append(production_file)
+    return result
+
+
+def _naming_map_tests_batch_worker(
+    files: list[str],
+    *,
+    production_files: set[str],
+    lang_name: str,
+    prod_by_basename: dict[str, list[str]],
+) -> list[str]:
+    tested: set[str] = set()
+    for test_file in files:
+        matched = _map_test_to_source(test_file, production_files, lang_name)
+        if matched:
+            tested.add(matched)
+            continue
+
+        basename = os.path.basename(test_file)
+        src_name = _strip_test_markers(basename, lang_name)
+        if src_name and src_name in prod_by_basename:
+            for production_file in prod_by_basename[src_name]:
+                tested.add(production_file)
+    return list(tested)

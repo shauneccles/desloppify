@@ -111,7 +111,7 @@ def _process_security_file(filepath: str, zone_map: FileZoneMap | None) -> tuple
         if stripped.startswith("//"):
             continue
         entries.extend(
-            _line_security_findings(
+            _line_security_issues(
                 filepath=filepath,
                 normalized_path=normalized_path,
                 lines=lines,
@@ -123,7 +123,7 @@ def _process_security_file(filepath: str, zone_map: FileZoneMap | None) -> tuple
         )
 
     entries.extend(
-        _file_level_security_findings(
+        _file_level_security_issues(
             filepath=filepath,
             normalized_path=normalized_path,
             lines=lines,

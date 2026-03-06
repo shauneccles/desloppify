@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 from copy import deepcopy
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -42,9 +42,15 @@ def write_packet_snapshot(
     """Persist immutable and blind packet snapshots for runner workflows."""
     review_packet_dir.mkdir(parents=True, exist_ok=True)
     packet_path = review_packet_dir / f"holistic_packet_{stamp}.json"
-    safe_write_text_fn(packet_path, json.dumps(packet, indent=2) + "\n")
+    safe_write_text_fn(
+        packet_path,
+        orjson.dumps(packet, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+    )
     blind_packet = _build_blind_packet(packet)
-    safe_write_text_fn(blind_path, json.dumps(blind_packet, indent=2) + "\n")
+    safe_write_text_fn(
+        blind_path,
+        orjson.dumps(blind_packet, option=orjson.OPT_INDENT_2).decode("utf-8") + "\n",
+    )
     return packet_path, blind_path
 
 
